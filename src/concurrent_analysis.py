@@ -346,7 +346,7 @@ def cluster_plot(args, norm_task_variance, task_variance_dict, epoch, save_dir, 
         labels = cluster_model.fit_predict(X)
         silhouette_scores.append(silhouette_score(X, labels))
         #elbow
-        agglom = AgglomerativeClustering(n_clusters=k)
+        agglom = AgglomerativeClustering(n_clusters=n)
         agglom.fit(X)
         wss_values.append(agglom.inertia_)
 
@@ -355,7 +355,7 @@ def cluster_plot(args, norm_task_variance, task_variance_dict, epoch, save_dir, 
     plt.xlabel('Number of Clusters (k)')
     plt.ylabel('Within-Cluster Sum of Squares (WSS)')
     plt.title('Elbow Method for Optimal k')
-    plt.savefig(f'{save_dir}/elbow_method.png')
+    plt.savefig(f'{save_dir}/epoch={epoch}_elbow_method.png')
     plt.show()
 
     n_cluster = n_clusters[np.argmax(silhouette_scores)]
