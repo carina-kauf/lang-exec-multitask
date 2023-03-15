@@ -17,7 +17,7 @@ def get_savedir(args):
         model_save_dir = "../results_om"
 
     if args.CTRNN:
-        dir_name = "CTRNN"
+        dir_name = f"CTRNN_{args.nonlinearity}"
     else:
         dir_name = f"{args.model}"
     _logger.info(f"*********** Running with {dir_name} model ***********")
@@ -77,7 +77,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Multitask RNN Model')
     parser.add_argument('--CTRNN', action='store_true',
                         help='If flag is set, running with continuous-time CTRNN, else running with discrete-time RNN')
-    parser.add_argument('--nonlinearity', type=str, default='relu',
+    parser.add_argument('--nonlinearity', type=str, default='softplus',
                         help='activation function used in CTRNN model, can be one of relu, softplus, ...')
     parser.add_argument('--sparse_model', action='store_true',
                         help='If flag is set, we apply a mask to the h2h layer of the CTRNN a la Khona et al. 2022')

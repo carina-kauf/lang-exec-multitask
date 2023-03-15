@@ -28,6 +28,7 @@ import numpy as np
 # dependence of e. g. 'g' on 'f' can not be learned, but allows more efficient
 # batch processing.
 
+
 def batchify(data, bsz):
     """Divides the data into bsz separate sequences, removing extra elements
     that wouldn't cleanly fit.

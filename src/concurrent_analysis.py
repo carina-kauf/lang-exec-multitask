@@ -340,10 +340,23 @@ def cluster_plot(args, norm_task_variance, task_variance_dict, epoch, save_dir, 
     else:
         n_clusters = np.arange(2, MAX_NUMBER)
 
+    wss_values = []
     for n in n_clusters:
         cluster_model = AgglomerativeClustering(n_clusters=n)
         labels = cluster_model.fit_predict(X)
         silhouette_scores.append(silhouette_score(X, labels))
+        #elbow
+        agglom = AgglomerativeClustering(n_clusters=k)
+        agglom.fit(X)
+        wss_values.append(agglom.inertia_)
+
+    # Plot the WSS versus the number of clusters
+    plt.plot(n_clusters, wss_values, 'o-')
+    plt.xlabel('Number of Clusters (k)')
+    plt.ylabel('Within-Cluster Sum of Squares (WSS)')
+    plt.title('Elbow Method for Optimal k')
+    plt.savefig(f'{save_dir}/elbow_method.png')
+    plt.show()
 
     n_cluster = n_clusters[np.argmax(silhouette_scores)]
 
@@ -760,6 +773,8 @@ def main(args, model_save_dir, model, cog_dataset_dict, epoch, cog_accuracies, a
             env_id1 = "wikitext"
         elif "penntreebank" in env_ids:
             env_id1 = "penntreebank"
+        elif "pennchar" in env_ids:
+            env_id1 = "pennchar"
         elif any(re.match("[a-z]{2}_wiki", task) for task in env_ids):
             env_id1 = [task for task in env_ids if re.match("[a-z]{2}_wiki", task)][0]
         else:

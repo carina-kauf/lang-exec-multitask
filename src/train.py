@@ -123,6 +123,7 @@ def evaluate(args, model, criterion, data_source, mode): #FIXME add early stoppi
 def plot_loss(args, epoch, loss_data, model_save_dir):
 
     def figure_settings():
+        """ Figure settings"""
         figsize = (3.5, 2.5)
         rect = [0.25, 0.2, 0.6, 0.7]
         rect_color = [0.25, 0.15, 0.6, 0.05]
@@ -153,6 +154,8 @@ def plot_silhouette_heatmap(args, model_save_dir, silhouette_scores_per_epoch, e
     """Plots a heatmap of the silhouette score per number of predefined clusters per epoch
 
     Args:
+        args: Arguments
+        model_save_dir: Directory where the model is saved
         silhouette_scores_per_epoch: Dictionary, shape [nr_epochs,nr_predefined_cluster(here:2-30)]
 
     Returns:
@@ -180,6 +183,10 @@ def plot_silhouette_heatmap(args, model_save_dir, silhouette_scores_per_epoch, e
 
 
 def main(args, model_save_dir):
+    """ Main function
+    args: Arguments
+    model_save_dir: Directory where the model is saved
+    """
     # define writers
     if SAVE:
         train_writer, test_writer = get_writers(model_save_dir)
