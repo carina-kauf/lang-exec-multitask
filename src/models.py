@@ -3,6 +3,132 @@ import torch.nn.functional as F
 import numpy as np
 
 #####################
+# Yang19 CTRNN model
+#####################
+class CTRNN(nn.Module):
+    """Continuous-time RNN.
+    Args:
+        hidden_size: Number of hidden neurons
+    Inputs:
+        input: (seq_len, batch, input_size), network input
+        hidden: (batch, hidden_size), initial hidden activity
+    """
+
+    def __init__(self, args, mask=None, **kwargs):
+        super().__init__()
+        self.tau = 100
+        if args.dt is None:
+            alpha = 1
+        else:
+            alpha = args.dt / self.tau
+        self.alpha = alpha
+        self.oneminusalpha = 1 - alpha
+
+        self._sigma = np.sqrt(2 / alpha) * args.sigma_rec  # recurrent unit noise
+        self.h2h = nn.Linear(args.hidden_size, args.hidden_size)
+        self.reset_parameters()
+        self.hidden_size = args.hidden_size
+
+        # initialize hidden to hidden weight matrix using the mask
+        if mask is not None:
+            self.h2h.weight.data = self.h2h.weight.data * torch.nn.Parameter(mask)
+
+        # define activation function
+        ACTIVATION_FN_DICT = {
+            'relu': torch.nn.ReLU(),
+            'softplus': torch.nn.Softplus(),
+            'tanh': torch.nn.Tanh()
+        }
+        self.activation_fn = ACTIVATION_FN_DICT[args.nonlinearity]
+
+    def reset_parameters(self):
+        nn.init.eye_(self.h2h.weight)
+        self.h2h.weight.data *= 0.5
+
+    def init_hidden(self, input):
+        batch_size = input.shape[1]
+        return torch.zeros(batch_size, self.hidden_size).to(input.device)
+
+    def recurrence(self, input, hidden, input2hs, task):
+        """Recurrence helper."""
+        try:
+            pre_activation = input2hs[task](input) + self.h2h(hidden)
+        except:
+            print(f"Need torch.float32 tensor for cog. tasks but got tensor of type #{input.dtype}#,"
+                  f"converting input format")
+            pre_activation = input2hs[task](input.to(torch.float32)) + self.h2h(hidden)
+
+        # add recurrent unit noise
+        mean = torch.zeros_like(pre_activation)
+        std = self._sigma
+        noise_rec = torch.normal(mean=mean, std=std)
+        pre_activation += noise_rec
+        h_new = hidden * self.oneminusalpha + self.activation_fn(pre_activation) * self.alpha
+        return h_new
+
+    def forward(self, input, input2hs, task, hidden=None):
+        """Propagate input through the network."""
+        if hidden is None:
+            hidden = self.init_hidden(input)
+
+        output = []
+        steps = range(input.size(0))
+        for i in steps:
+            hidden = self.recurrence(input[i], hidden, input2hs, task)
+            output.append(hidden)
+
+        output = torch.stack(output, dim=0)
+        return output, hidden
+
+
+class Yang19_CTRNNModel(nn.Module):
+    """RNN model with CTRNN module.
+    Args:
+        TRAINING_TASK_SPECS: dictionary of training task specifications
+        hidden_size: Number of hidden neurons
+        nonlinearity: activation function
+        sigma_rec: recurrent unit noise
+        mask: optional mask for recurrent weight matrix
+    Inputs:
+        x: (seq_len, batch_size, input_size), network input
+        task: task index
+    Returns:
+        out: (seq_len * batch_size, output_size), network output
+        rnn_activity: (hidden_size, hidden_size), hidden activity
+    """
+
+    def __init__(self, args, TRAINING_TASK_SPECS, mask=None, **kwargs):
+        super().__init__()
+        self.TRAINING_TASK_SPECS = TRAINING_TASK_SPECS
+        self.hidden_size = args.hidden_size
+
+        # define task-specific encoders and decoders
+        encoders, decoders = nn.ModuleDict(), nn.ModuleDict()
+        for task in TRAINING_TASK_SPECS.keys():
+            if TRAINING_TASK_SPECS[task]["using_pretrained_emb"]: #FIXME re-add for contrib tasks!
+                encoders.add_module(task, nn.Embedding.from_pretrained(TRAINING_TASK_SPECS[task]["pretrained_emb_weights"], freeze=True))
+            else:
+                if TRAINING_TASK_SPECS[task]["dataset"] == "lang":
+                    encoders.add_module(task, nn.Embedding(TRAINING_TASK_SPECS[task]["input_size"], args.hidden_size))
+                else:
+                    assert TRAINING_TASK_SPECS[task]["dataset"] == "cog"
+                    encoders.add_module(task, nn.Linear(TRAINING_TASK_SPECS[task]["input_size"], args.hidden_size))
+            decoders.add_module(task, nn.Linear(args.hidden_size, TRAINING_TASK_SPECS[task]["output_size"]))
+
+        # build model
+        self.encoders = encoders
+        # Continuous time RNN
+        self.rnn = CTRNN(args, mask=mask, **kwargs)
+        self.decoders = decoders
+
+    def forward(self, x, task):
+        rnn_activity, _ = self.rnn(x, self.encoders, task)
+        out = self.decoders[task](rnn_activity)
+        out = out.view(-1, self.TRAINING_TASK_SPECS[task]["output_size"])
+        return out, rnn_activity
+
+
+#####################
 # Discrete time multitask RNN model
 #####################
 class Multitask_RNNModel(nn.Module):
@@ -10,58 +136,52 @@ class Multitask_RNNModel(nn.Module):
     Based on Pytorch Word Language model https://github.com/pytorch/examples/blob/master/word_language_model/model.py
 
     Container module with a task-specific encoder module list, a recurrent module, and a task-specific decoder module list
-    The proper encoders and decoders are indexed when the model is called via on the 'mode' argument
+    The proper encoders and decoders are indexed when the model is called via on the 'task' argument
     (see MODE2TASK dictionary)
 
     Args (different from base model):
-        TASK2DIM: dictionary mapping from tasks to the respective input & output sizes
-        MODE2TASK: dictionary mapping from modes (indices) to tasks
+        TRAINING_TASK_SPECS: dictionary of training task specifications (including vocab size, etc.)
     """
 
-    def __init__(self, TASK2DIM, MODE2TASK, rnn_type, ninp, hidden_size, nlayers, pretrained_emb_weights=None,
-                 dropout=0.5, tie_weights=False):
+    def __init__(self, args, TRAINING_TASK_SPECS, dropout=0.5):
         super(Multitask_RNNModel, self).__init__()
 
-        self.modes = list(MODE2TASK.keys())
-        self.TASK2DIM = TASK2DIM
-        self.MODE2TASK = MODE2TASK
-
+        self.tasks = list(TRAINING_TASK_SPECS.keys())
         self.drop = nn.Dropout(dropout)
-        self.encoders, self.decoders = [], []
+        encoders, decoders = nn.ModuleDict(), nn.ModuleDict()
 
         # define task-specific encoders and decoders
-        for key in TASK2DIM.keys():
-            if any(x in key for x in ["lang", "contrib."]):
-                if pretrained_emb_weights is not None:
-                    self.encoders.append(nn.Embedding.from_pretrained(pretrained_emb_weights[key], freeze=True))
-                    self.decoders.append(nn.Linear(hidden_size, TASK2DIM[key]["output_size"]))
-                else:
-                    self.encoders.append(nn.Embedding(TASK2DIM[key]["input_size"], hidden_size))
-                    self.decoders.append(nn.Linear(hidden_size, TASK2DIM[key]["output_size"]))
+        for task in self.tasks:
+            if TRAINING_TASK_SPECS[task]["pretrained_emb_weights"] is not None:
+                encoders.add_module(task, nn.Embedding.from_pretrained(TRAINING_TASK_SPECS[task]["pretrained_emb_weights"], freeze=True))
             else:
-                self.encoders.append(nn.Linear(TASK2DIM[key]["input_size"], hidden_size))
-                self.decoders.append(nn.Linear(hidden_size, TASK2DIM[key]["output_size"]))
+                if TRAINING_TASK_SPECS[task]["dataset"] == "lang":
+                    encoders.add_module(task, nn.Embedding(TRAINING_TASK_SPECS[task]["input_size"], args.hidden_size))
+                else:
+                    assert TRAINING_TASK_SPECS[task]["dataset"] == "cog"
+                    encoders.add_module(task, nn.Linear(TRAINING_TASK_SPECS[task]["input_size"], args.hidden_size))
+            decoders.add_module(task, nn.Linear(args.hidden_size,TRAINING_TASK_SPECS[task]["output_size"]))
 
         # define model
-        self.encoders = nn.ModuleList(self.encoders)
+        self.encoders = encoders
 
-        if rnn_type in ['LSTM', 'GRU']:
-            self.rnn = getattr(nn, rnn_type)(ninp, hidden_size, nlayers, dropout=dropout)
-        elif rnn_type in ['RNN_TANH', 'RNN_RELU']:
-            nonlinearity = {'RNN_TANH': 'tanh', 'RNN_RELU': 'relu'}[rnn_type]
-            self.rnn = nn.RNN(ninp, hidden_size, nlayers, nonlinearity=nonlinearity, dropout=dropout)
-        elif rnn_type in ['RNN_SOFTPLUS', 'RNN_RELU_TEST']:
+        if args.discrete_time_rnn in ['LSTM', 'GRU']:
+            self.rnn = getattr(nn, args.discrete_time_rnn)(args.hidden_size, args.hidden_size, args.nlayers, dropout=dropout)
+        elif args.discrete_time_rnn in ['RNN_TANH', 'RNN_RELU']:
+            nonlinearity = {'RNN_TANH': 'tanh', 'RNN_RELU': 'relu'}[args.discrete_time_rnn]
+            self.rnn = nn.RNN(args.hidden_size, args.hidden_size, args.nlayers, nonlinearity=args.nonlinearity, dropout=dropout)
+        elif args.discrete_time_rnn in ['RNN_SOFTPLUS', 'RNN_RELU_TEST']:
             try:
-                nonlinearity = {'RNN_SOFTPLUS': nn.Softplus(), 'RNN_RELU_TEST': nn.ReLU()}[rnn_type]
-                self.rnn = RNNLayer(ninp, hidden_size, nonlinearity)
+                nonlinearity = {'RNN_SOFTPLUS': nn.Softplus(), 'RNN_RELU_TEST': nn.ReLU()}[args.discrete_time_rnn]
+                self.rnn = RNNLayer(args.hidden_size, args.hidden_size, nonlinearity)
             except KeyError:
                 raise ValueError("""An invalid option for `--model` was supplied,
                                  options are ['LSTM', 'GRU', 'RNN_TANH', 'RNN_RELU' or 'RNN_SOFTPLUS]""")
         else:
             raise NotImplementedError("Unknown!")
 
-        self.rnn_type = rnn_type
-        self.decoders = nn.ModuleList(self.decoders)
+        self.rnn_type = args.discrete_time_rnn
+        self.decoders = decoders
 
         # Optionally tie weights as in:
         # "Using the Output Embedding to Improve Language Models" (Press & Wolf 2016)
@@ -69,33 +189,29 @@ class Multitask_RNNModel(nn.Module):
         # and
         # "Tying Word Vectors and Word Classifiers: A Loss Framework for Language Modeling" (Inan et al. 2016)
         # https://arxiv.org/abs/1611.01462
-        if tie_weights:
-            if hidden_size != ninp:
-                raise ValueError('When using the tied flag, hidden_size must be equal to emsize')
-            for i in self.modes:
-                curr_mode = self.modes[i]
-                self.decoders[curr_mode].weight = self.encoders[curr_mode].weight
+        if args.tie_weights:
+            for task in self.tasks:
+                self.decoders[task].weight = self.encoders[task].weight
 
         self.init_weights()
 
-        self.nhid = hidden_size
-        self.nlayers = nlayers
+        self.nhid = args.hidden_size
+        self.nlayers = args.nlayers
 
     def init_weights(self):
         initrange = 0.1
-        for i in self.modes:
-            curr_mode = self.modes[i]
-            nn.init.uniform_(self.encoders[curr_mode].weight, -initrange, initrange)
-            nn.init.zeros_(self.decoders[curr_mode].weight)
-            nn.init.uniform_(self.decoders[curr_mode].weight, -initrange, initrange)
+        for task in self.tasks:
+            nn.init.uniform_(self.encoders[task].weight, -initrange, initrange)
+            nn.init.zeros_(self.decoders[task].weight)
+            nn.init.uniform_(self.decoders[task].weight, -initrange, initrange)
 
-    def forward(self, input, hidden, mode):
-        emb = self.encoders[mode](input) #input is (100, 20, 53) for cog (35, 20) for wikitext
+    def forward(self, input, hidden, task):
+        emb = self.encoders[task](input) #input is (100, 20, 53) for cog (35, 20) for wikitext
         emb = self.drop(emb)
         rnn_activity, hidden = self.rnn(emb, hidden)
         output = self.drop(rnn_activity)
-        decoded = self.decoders[mode](output)
-        decoded = decoded.view(-1, self.TASK2DIM[self.MODE2TASK[mode]]["output_size"])
+        decoded = self.decoders[task](output)
+        decoded = decoded.view(-1, self.TRAINING_TASK_SPECS[task]["output_size"])
         return decoded, hidden, rnn_activity
         #return F.log_softmax(decoded, dim=1), hidden, rnn_activity #for NLLLoss
 
@@ -106,129 +222,6 @@ class Multitask_RNNModel(nn.Module):
                     weight.new_zeros(self.nlayers, bsz, self.nhid))
         else:
             return weight.new_zeros(self.nlayers, bsz, self.nhid)
-
-
-#####################
-# Yang19 CTRNN model
-#####################
-class CTRNN(nn.Module):
-    """Continuous-time RNN.
-    Args:
-        input_size: Number of input neurons
-        hidden_size: Number of hidden neurons
-    Inputs:
-        input: (seq_len, batch, input_size), network input
-        hidden: (batch, hidden_size), initial hidden activity
-    """
-
-    def __init__(self, hidden_size, nonlinearity, sigma_rec=None, dt=None, mask=None, **kwargs):
-        super().__init__()
-        self.tau = 100
-        if dt is None:
-            alpha = 1
-        else:
-            alpha = dt / self.tau
-        self.alpha = alpha
-        self.oneminusalpha = 1 - alpha
-        self.mask = mask
-
-        self._sigma = np.sqrt(2 / alpha) * sigma_rec  # recurrent unit noise
-        self.h2h = nn.Linear(hidden_size, hidden_size)
-        self.reset_parameters()
-
-        # initialize hidden to hidden weight matrix using the mask
-        if mask is not None:
-            self.h2h.weight.data = self.h2h.weight.data * torch.nn.Parameter(mask)
-
-        self.hidden_size = hidden_size
-
-        ACTIVATION_FN_DICT = {
-            'relu': torch.nn.ReLU(),
-            'softplus': torch.nn.Softplus(),
-            'tanh': torch.nn.Tanh()
-        }
-        self.activation_fn = ACTIVATION_FN_DICT[nonlinearity]
-
-    def reset_parameters(self):
-        nn.init.eye_(self.h2h.weight)
-        self.h2h.weight.data *= 0.5
-
-    def init_hidden(self, input):
-        batch_size = input.shape[1]
-        return torch.zeros(batch_size, self.hidden_size).to(input.device)
-
-    def recurrence(self, input, hidden, input2hs, mode):
-        """Recurrence helper."""
-        try:
-            pre_activation = input2hs[mode](input) + self.h2h(hidden)
-        except:
-            print(f"Need float tensor here but got tensor of type #{input.dtype}#, converting input format")
-            pre_activation = input2hs[mode](input.to(torch.float32)) + self.h2h(hidden)
-
-        # add recurrent unit noise
-        mean = torch.zeros_like(pre_activation)
-        std = self._sigma
-        noise_rec = torch.normal(mean=mean, std=std)
-        pre_activation += noise_rec
-
-        #h_new = hidden * self.oneminusalpha + torch.relu(pre_activation) * self.alpha
-        h_new = hidden * self.oneminusalpha + self.activation_fn(pre_activation) * self.alpha
-        return h_new
-
-    def forward(self, input, input2hs, mode, hidden=None):
-        """Propagate input through the network."""
-        if hidden is None:
-            hidden = self.init_hidden(input)
-
-        output = []
-        steps = range(input.size(0))
-        for i in steps:
-            hidden = self.recurrence(input[i], hidden, input2hs, mode)
-            output.append(hidden)
-
-        output = torch.stack(output, dim=0)
-        return output, hidden
-
-
-class Yang19_RNNNet(nn.Module):
-    """Recurrent network model.
-    Args:
-        input_size: int, input size
-        hidden_size: int, hidden size
-        output_size: int, output size
-        rnn: str, type of RNN, lstm, rnn, ctrnn, or eirnn
-    """
-
-    def __init__(self, TASK2DIM, MODE2TASK, pretrained_emb_weights, hidden_size, nonlinearity, sigma_rec=0.05, mask=None, **kwargs):
-        super().__init__()
-
-        self.input2hs = []
-        self.fcs = []
-
-        for task in TASK2DIM.keys():
-            if any(x in task for x in ["lang", "contrib."]):
-                if pretrained_emb_weights is not None:
-                    input2h = nn.Embedding.from_pretrained(pretrained_emb_weights[task], freeze=True)
-                else:
-                    input2h = nn.Embedding(TASK2DIM[task]["input_size"], hidden_size)
-            else:
-                input2h = nn.Linear(TASK2DIM[task]["input_size"], hidden_size)
-            self.input2hs.append(input2h)
-            self.fcs.append(nn.Linear(hidden_size, TASK2DIM[task]["output_size"]))
-
-        self.input2hs = nn.ModuleList(self.input2hs)
-        # Continuous time RNN
-        self.rnn = CTRNN(hidden_size, nonlinearity, sigma_rec=sigma_rec, mask=mask, **kwargs)
-        self.fcs = nn.ModuleList(self.fcs)
-
-        self.TASK2DIM = TASK2DIM
-        self.MODE2TASK = MODE2TASK
-
-    def forward(self, x, mode):
-        rnn_activity, _ = self.rnn(x, self.input2hs, mode)
-        out = self.fcs[mode](rnn_activity)
-        out = out.view(-1, self.TASK2DIM[self.MODE2TASK[mode]]["output_size"])
-        return out, rnn_activity
 
 
 #####################################
