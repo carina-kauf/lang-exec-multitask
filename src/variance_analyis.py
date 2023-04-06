@@ -2,36 +2,30 @@ import logging
 import torch
 import numpy as np
 
-from utils_general import set_seed, repackage_hidden
+from dataloader_cog_tasks import build_cognitive_dataset
 from dataloader_lang_tasks import get_batch
-
-import gym
-import neurogym as ngym
 
 from sklearn.cluster import AgglomerativeClustering
 from sklearn.metrics import silhouette_score
-from neurogym.wrappers.block import MultiEnvs
 from sklearn.metrics.pairwise import cosine_similarity
 import matplotlib
 import matplotlib.pyplot as plt
-from matplotlib.gridspec import GridSpec
-import os
+import re
+
 import pandas as pd
 import seaborn as sns
-import pickle
-
-import re
 
 _logger = logging.getLogger(__name__)
 
 
-def get_activity(args, model, cog_multi_env, task, tasks_env_dict, TRAINING_TASK_SPECS, device=None, num_trial=1000):
+def get_activity(args, model, task, tasks_env_dict, TRAINING_TASK_SPECS, device=None, num_trial=1000):
     """Get activity of equal-length trials
     Returns:
         activity: (num_trial, num_time_step, num_neuron)
         trial_list: list of trial index
     """
     activity_list, trial_list = list(), list()
+    eval_env = tasks_env_dict[task]["env"] # multitask env for collections, single task env for contrib/lang
 
     if tasks_env_dict[task]["dataset"] == "lang":
         if not args.CTRNN:
@@ -50,11 +44,17 @@ def get_activity(args, model, cog_multi_env, task, tasks_env_dict, TRAINING_TASK
             else:
                 action_pred, activity, hidden = model(input=inputs, hidden=hidden, task=task)
         else:
-            cog_multi_env.set_i(tasks_env_dict[task]["index"])
-            cog_multi_env.new_trial()
-            ob = cog_multi_env.ob
-            ob = ob[:, np.newaxis, :]  # Add batch axis
-            inputs = torch.from_numpy(ob).type(torch.float).to(device)
+            if 'contrib' not in task:
+                eval_env.set_i(tasks_env_dict[task]["index"])
+            eval_env.new_trial()
+            ob = eval_env.ob
+            if 'contrib' not in task:
+                ob = ob[:, np.newaxis, :]  # Add batch axis
+                inputs = torch.from_numpy(ob).type(torch.float).to(device)
+            else:
+                ob = ob[:, np.newaxis]
+                inputs = torch.from_numpy(ob).type(torch.long).to(device)
+
             if args.CTRNN:
                 # can't index with task here, because the modules in the model are defined with the overall task set identifier
                 action_pred, activity = model(x=inputs, task=tasks_env_dict[task]["task_set"])
@@ -62,8 +62,9 @@ def get_activity(args, model, cog_multi_env, task, tasks_env_dict, TRAINING_TASK
                 action_pred, activity = model(input=inputs, hidden=hidden, task=tasks_env_dict[task]["task_set"])
 
         activity = activity.detach().cpu().numpy()
-        trial_list.append(cog_multi_env.trial)
         activity_list.append(activity)
+        if tasks_env_dict[task]["dataset"] == "cog":
+            trial_list.append(eval_env.trial)
 
     activity = np.concatenate(activity_list, axis=1)
     return activity, trial_list
@@ -80,34 +81,34 @@ def get_normalized_task_variance(args, TRAINING_TASK_SPECS, model, device=None):
         activity_dict (dict): dict of activity (key: task name, value: activity) [raw unit activity]
             - shape: (n_task, n_trial, n_time_step, n_units), e.g., (10, 1000, 100, 300)
     """
-    cog_tasks = []
-    for task in args.tasks:
-        if TRAINING_TASK_SPECS[task]["dataset"] == "cog":
-            all_subtasks = TRAINING_TASK_SPECS[task]["full_task_list"]
-            task_set = [task] * len(all_subtasks)
-            zipped = zip(all_subtasks, task_set)
-            cog_tasks.extend(zipped)
-    only_tasks = [subtask for (subtask, task_set) in cog_tasks]
-
-    cog_multi_env = None
     tasks_env_dict = {}
-    # individual env specifications for all collection tasks
-    if len(cog_tasks) > 0:
-        timing = {'fixation': ('constant', 500)}
-        kwargs = {'dt': args.dt, 'timing': timing}
-        envs = [gym.make(task, **kwargs) for task in only_tasks]
-        cog_multi_env = MultiEnvs(envs, env_input=True) #todo when only training on one task, env_input is not necessary
-        for i, (subtask, task_set) in enumerate(cog_tasks):
-            tasks_env_dict[subtask] = {}
-            tasks_env_dict[subtask]["task_set"] = task_set
-            tasks_env_dict[subtask]["index"] = i
-            tasks_env_dict[subtask]["dataset"] = "cog"
-    for task in TRAINING_TASK_SPECS.keys():
-        if TRAINING_TASK_SPECS[task]["dataset"] == "lang":
-            tasks_env_dict[task] = {}
-            tasks_env_dict[task]["task_set"] = task
-            tasks_env_dict[task]["env"] = task
-            tasks_env_dict[task]["dataset"] = "lang"
+    cog_tasks = [elm for elm in TRAINING_TASK_SPECS.keys() if TRAINING_TASK_SPECS[elm]["dataset"] == "cog"]
+    lang_tasks = [elm for elm in TRAINING_TASK_SPECS.keys() if TRAINING_TASK_SPECS[elm]["dataset"] == "lang"]
+
+    for task_identifier in TRAINING_TASK_SPECS.keys():
+        if task_identifier in cog_tasks:
+            cog_multi_env, all_tasks, collections = build_cognitive_dataset(args, task_identifier, return_multienv=True)
+            if task_identifier in collections:
+                for i, subtask in enumerate(all_tasks):
+                    tasks_env_dict[subtask] = {}
+                    tasks_env_dict[subtask]["task_set"] = task_identifier
+                    tasks_env_dict[subtask]["index"] = i
+                    tasks_env_dict[subtask]["dataset"] = "cog"
+                    tasks_env_dict[subtask]["env"] = cog_multi_env
+            else:
+                tasks_env_dict[task_identifier] = {}
+                tasks_env_dict[task_identifier]["task_set"] = task_identifier
+                tasks_env_dict[task_identifier]["dataset"] = "cog"
+                tasks_env_dict[task_identifier]["env"] = cog_multi_env
+
+        elif task_identifier in lang_tasks:
+            tasks_env_dict[task_identifier] = {}
+            tasks_env_dict[task_identifier]["task_set"] = task_identifier
+            tasks_env_dict[task_identifier]["env"] = task_identifier
+            tasks_env_dict[task_identifier]["dataset"] = "lang"
+
+        else:
+            raise ValueError(f"Task {task_identifier} not found in TRAINING_TASK_SPECS")
 
     task_variance_list = list()
     activity_dict = {}  # recording activity
@@ -115,7 +116,8 @@ def get_normalized_task_variance(args, TRAINING_TASK_SPECS, model, device=None):
     print(f"Getting normalized task variance for {len(tasks_env_dict.keys())} tasks...")
     for i, task in enumerate(tasks_env_dict.keys()):
         print(f"{i+1} | {task}")
-        activity, trial_list = get_activity(args=args, model=model, cog_multi_env=cog_multi_env, task=task, tasks_env_dict=tasks_env_dict,
+        activity, trial_list = get_activity(args=args, model=model, task=task,
+                                            tasks_env_dict=tasks_env_dict,
                                             TRAINING_TASK_SPECS=TRAINING_TASK_SPECS, device=device, num_trial=500)
         activity_dict[i] = activity
         # Compute task variance across trials
@@ -143,7 +145,7 @@ def figure_settings():
     return figsize, rect, rect_color, rect_cb, fs, labelpad
 
 
-def cluster_plot(norm_task_variance, tasks):
+def cluster_plot(args, norm_task_variance, tasks):
     """Plot clustering of hidden units based on task preference
     Args:
         norm_task_variance (np.ndarray): normalized task variance of hidden units
@@ -152,11 +154,13 @@ def cluster_plot(norm_task_variance, tasks):
     """
     X = norm_task_variance.T
     silhouette_scores = list()
-    n_clusters = np.arange(2, 20)
+    n_clusters = np.arange(2, args.max_cluster_nr + 1)
+
     for n in n_clusters:
         cluster_model = AgglomerativeClustering(n_clusters=n)
         labels = cluster_model.fit_predict(X)
         silhouette_scores.append(silhouette_score(X, labels))
+
     plt.figure()
     plt.plot(n_clusters, silhouette_scores, 'o-')
     plt.xlabel('Number of clusters')
@@ -199,8 +203,8 @@ def cluster_plot(norm_task_variance, tasks):
 
     plt.yticks(range(len(tick_names)), tick_names, rotation=0, va='center', fontsize=fs)
     plt.xticks([])
-    plt.title('Units', fontsize=fs, y=0.97)
-    plt.xlabel('Clusters', fontsize=fs, labelpad=labelpad)
+    plt.title('Units', fontsize=fs, y=1)
+    plt.xlabel('\n\nClusters', fontsize=fs, labelpad=labelpad)
     ax.tick_params('both', length=0)
     for loc in ['bottom', 'top', 'left', 'right']:
         ax.spines[loc].set_visible(False)
@@ -219,7 +223,7 @@ def cluster_plot(norm_task_variance, tasks):
     for il, l in enumerate(np.unique(labels)):
         color = cmap(il % 10)
         ind_l = np.where(labels == l)[0][[0, -1]]+np.array([0, 1])
-        ax.plot(ind_l, [0,0], linewidth=4, solid_capstyle='butt',
+        ax.plot(ind_l, [0, 0], linewidth=4, solid_capstyle='butt',
                 color=color)
         ax.text(np.mean(ind_l), -0.5, str(il+1), fontsize=fs,
                 ha='center', va='top', color=color)
@@ -227,7 +231,39 @@ def cluster_plot(norm_task_variance, tasks):
     ax.set_ylim([-1, 1])
     ax.axis('off')
     fig.show()
-    return sorted_norm_task_variance
+    return sorted_norm_task_variance, silhouette_scores
+
+
+def plot_silhouette_heatmap(args, silhouette_scores_per_epoch):
+    """Plots a heatmap of the silhouette score per number of predefined clusters per epoch
+
+    Args:
+        args: Arguments
+        silhouette_scores_per_epoch: List of lists, shape [nr_epochs,nr_predefined_cluster]
+
+    Returns:
+        Plots heatmap
+    """
+    MAX_NUMBER = args.max_cluster_nr
+    # specifying column names
+    nr_epochs = np.arange(len(silhouette_scores_per_epoch))
+    nr_clusters = np.arange(2, MAX_NUMBER + 1)
+
+    # Create the pandas DataFrame
+    plot_df = pd.DataFrame(silhouette_scores_per_epoch)
+
+    plot_df.columns = nr_clusters
+    plot_df.index = nr_epochs
+    plot_df = plot_df.T #since we want epochs to be on the x-axis
+
+    # ax = sns.heatmap(df)
+    fig = plt.figure()
+    ax = sns.heatmap(plot_df, annot=True, cmap="coolwarm") #viridis
+    ax.set(xlabel="Epoch number", ylabel="Nr. of clusters", title=f"Silhouette scores | Epoch {nr_epochs}")
+    ax.collections[0].colorbar.set_label("Silhouette score")
+    # plt.savefig(f"{model_save_dir}/seed={args.seed}_epoch={epoch}_silhouette_heatmap.png",
+    #             bbox_inches="tight", dpi=280) #TODO: save
+    plt.show()
 
 
 def plot_task_similarity(norm_task_variance, tasks):
@@ -259,13 +295,13 @@ def plot_task_similarity(norm_task_variance, tasks):
                rotation=0, va='center', fontsize=fs)
     plt.xticks(range(len(tick_names)), tick_names,
                rotation=90, va='top', fontsize=fs)
+    plt.title('Task Similarity', fontsize=fs*1.5)
 
     ax = fig.add_axes([0.87, 0.25, 0.03, 0.6])
     cb = plt.colorbar(im, cax=ax, ticks=[0, 1])
     cb.outline.set_linewidth(0.5)
     cb.set_label('Similarity', fontsize=fs, labelpad=0)
     plt.tick_params(axis='both', which='major', labelsize=fs)
-
     # plt.savefig(f'XXX_task_similarity.png') #TODO: save
     plt.show()
 
@@ -279,12 +315,17 @@ def plot_feature_similarity(sorted_norm_task_variance):
     print(f"Shape of sorted_norm_task_variance: {np.shape(sorted_norm_task_variance)}")
     X = sorted_norm_task_variance.T
     similarity = cosine_similarity(X)  # TODO: add other metric
-    print(np.shape(X), np.shape(similarity))
     figsize, rect, rect_color, rect_cb, fs, labelpad = figure_settings()
     fig = plt.figure(figsize=figsize)
     ax = fig.add_axes([0.25, 0.25, 0.6, 0.6])
     im = ax.imshow(similarity, cmap='magma', interpolation='nearest', vmin=0, vmax=1)
-    ax.axis('off')
+    # ax.axis('off')
+    # add axis labels
+    plt.xticks([])
+    plt.yticks([])
+    plt.xlabel('Units', fontsize=fs, labelpad=labelpad)
+    plt.ylabel('Units', fontsize=fs, labelpad=labelpad)
+    plt.title('Network unit similarity', fontsize=fs * 1.5)
 
     ax = fig.add_axes([0.87, 0.25, 0.03, 0.6])
     cb = plt.colorbar(im, cax=ax, ticks=[0, 1])
@@ -295,10 +336,15 @@ def plot_feature_similarity(sorted_norm_task_variance):
     plt.show()
 
 
-def main(args, TRAINING_TASK_SPECS, model, device):
+def main(args, TRAINING_TASK_SPECS, model, device, silhouette_scores_per_epoch):
+
+    model.eval()
     task_variance_dict, norm_task_variance, activity_dict = \
         get_normalized_task_variance(args=args, TRAINING_TASK_SPECS=TRAINING_TASK_SPECS, model=model, device=device)
     tasks = list(task_variance_dict.keys())
-    sorted_norm_task_variance = cluster_plot(norm_task_variance, tasks)
+    sorted_norm_task_variance, silhouette_scores = cluster_plot(args=args, norm_task_variance=norm_task_variance, tasks=tasks)
+    silhouette_scores_per_epoch.append(silhouette_scores)
     plot_task_similarity(norm_task_variance, tasks)
     plot_feature_similarity(sorted_norm_task_variance)
+    plot_silhouette_heatmap(args=args, silhouette_scores_per_epoch=silhouette_scores_per_epoch)
+    return silhouette_scores_per_epoch

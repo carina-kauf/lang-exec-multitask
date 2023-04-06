@@ -6,10 +6,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import math
 import os
-import pandas as pd
-import seaborn as sns
-from tqdm import tqdm, trange
-import pickle
+from tqdm import trange
 
 from utils_general import set_seed, repackage_hidden, mask2d
 from task_builder import build_training_tasks
@@ -25,15 +22,6 @@ from torch.utils.tensorboard import SummaryWriter
 import re
 
 _logger = logging.getLogger(__name__)
-
-def get_writers(model_save_dir):
-    """ Define tensorboard writers """
-    writer_name = re.sub("/", "+", model_save_dir)
-    writer_name = "+".join(writer_name.split("+")[2:])
-    train_writer = SummaryWriter(f"runs/{writer_name}/train_logs")
-    test_writer = SummaryWriter(f"runs/{writer_name}/test_logs")
-    return train_writer, test_writer
-
 
 def print_model_metainfo(model):
     """ Prints which parameters are in the model & which are being updated """
@@ -81,36 +69,15 @@ def evaluate(args, model, criterion, data_source, mode): #FIXME add early stoppi
     return total_loss / (len(data_source) - 1)
 
 
-def plot_silhouette_heatmap(args, model_save_dir, silhouette_scores_per_epoch, epoch):
-    """Plots a heatmap of the silhouette score per number of predefined clusters per epoch
-
-    Args:
-        args: Arguments
-        model_save_dir: Directory where the model is saved
-        silhouette_scores_per_epoch: Dictionary, shape [nr_epochs,nr_predefined_cluster(here:2-30)]
-
-    Returns:
-        Plots heatmap
-    """
-    MAX_NUMBER = 20 #FIXME turn into a parameter
-    # Create the pandas DataFrame
-    plot_df = pd.DataFrame(silhouette_scores_per_epoch)
-    # specifying column names
-    nr_epochs = np.arange(len(silhouette_scores_per_epoch))
-    nr_clusters = np.arange(2, MAX_NUMBER)
-
-    plot_df.columns = nr_clusters
-    plot_df.index = nr_epochs
-    plot_df = plot_df.T #since we want epochs to be on the x-axis
-
-    # ax = sns.heatmap(df)
-    fig = plt.figure()
-    ax = sns.heatmap(plot_df, annot=True, cmap="coolwarm") #viridis
-    ax.set(xlabel="Epoch number", ylabel="Nr. of clusters", title=f"Silhouette scores | Epoch {epoch}")
-    ax.collections[0].colorbar.set_label("Silhouette score")
-    plt.savefig(f"{model_save_dir}/seed={args.seed}_epoch={epoch}_silhouette_heatmap.png",
-                bbox_inches="tight", dpi=280)
-    plt.show()
+def get_writers(model_save_dir):
+    """ Define tensorboard writers """
+    writer_name = re.sub("/", "+", model_save_dir)
+    writer_name = "+".join(writer_name.split("+")[2:])
+    train_log_path = os.path.abspath(f"tensorboard_runs/{writer_name}/train_logs")
+    train_writer = SummaryWriter(train_log_path)
+    test_log_path = os.path.abspath(f"tensorboard_runs/{writer_name}/test_logs")
+    test_writer = SummaryWriter(test_log_path)
+    return train_writer, test_writer, train_log_path, test_log_path
 
 
 def main(args, model_save_dir):
@@ -122,7 +89,7 @@ def main(args, model_save_dir):
     ##################
     #     SET UP     #
     ##################
-    train_writer, test_writer = get_writers(model_save_dir)
+    train_writer, test_writer, train_log_path, test_log_path = get_writers(model_save_dir)
     set_seed(args.seed, args.cuda)
     device = torch.device("cuda" if args.cuda else "cpu")
     _logger.info(f"Running on this device: {device}")
@@ -141,6 +108,7 @@ def main(args, model_save_dir):
             individual_tasks.extend([task])
     # define language tasks
     language_tasks = [task for task in TRAINING_TASK_SPECS if TRAINING_TASK_SPECS[task]["dataset"] == "lang"]
+    cognitive_tasks = [task for task in TRAINING_TASK_SPECS if TRAINING_TASK_SPECS[task]["dataset"] == "cog"]
 
     # determine masking of h2h weights
     h2h_mask2d = None
@@ -189,9 +157,11 @@ def main(args, model_save_dir):
     #  Evaluate model prior to training   #
     #######################################
     # # run analysis on untrained model
+    silhouette_scores_per_epoch = list()
     if args.TODO == "train+analyze":
         _logger.info(f"Running analysis before training! Saving under epoch 0!")
-        _ = variance_analyis(args=args, TRAINING_TASK_SPECS=TRAINING_TASK_SPECS, model=model, device=device)
+        silhouette_scores_per_epoch = variance_analyis(args=args, TRAINING_TASK_SPECS=TRAINING_TASK_SPECS,
+                                                       model=model, device=device, silhouette_scores_per_epoch=silhouette_scores_per_epoch)
 
 
     #########################
@@ -206,15 +176,27 @@ def main(args, model_save_dir):
     # the below used to work in reducing lang. val data loss perplexity, but prevents clustering
     # optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4, weight_decay=0.1)
 
-    # define variables for early stopping
-    previous_val_ppl = np.inf
-
-    global_step = 0
-    train_iterator = trange(1, int(args.epochs) + 1, desc="Epoch")
-
     print("\n########################\n##### TRAIN MODEL ######\n########################\n", flush=True)
 
+    # define variable for early stopping
+    best_val_loss = None
+
+    global_step = 0
+    EARLY_STOPPING = False
+    EARLY_STOPPING_PATIENCE = 1  # Number of epochs to wait for improvement before early stopping
+
+    npy_avg_perf = {task: [] for task in cognitive_tasks}
+    npy_avg_perf_all_tasks = {task: [] for task in cognitive_tasks}
+    npy_losses = {task: [] for task in cognitive_tasks}
+    epochs_since_improvement = {task: 0 for task in language_tasks}
+
+    train_iterator = trange(1, int(args.epochs) + 1, desc="Epoch")
+
     for epoch in train_iterator:
+
+        if EARLY_STOPPING:
+            break
+
         start_time = time.time()
 
         total_loss = {task: 0. for task in args.tasks} # zero running loss at beginning of each epoch to prevent spikes!
@@ -273,8 +255,7 @@ def main(args, model_save_dir):
             loss.backward()
 
             # `clip_grad_norm` helps prevent the exploding gradient problem in RNNs / LSTMs.
-            if not args.CTRNN:
-                torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip)
             # take optimizer step to update weights
             optimizer.step()
 
@@ -292,11 +273,12 @@ def main(args, model_save_dir):
 
             # model training inspection
             if step % args.log_interval == 0 and step > 0:
-                if args.tasks == ["yang19"]:
-                    perf = get_performance(args=args, task_name=curr_task, net=model,
-                                           env=TRAINING_TASK_SPECS[curr_task]["dataset_cog"].env,
+                if curr_task not in language_tasks: # get performance on cognitive tasks
+                    perf, all_task_performances = get_performance(args=args, task_name=curr_task, net=model,
                                            device=device, num_trial=200)
                     print('{:d} perf: {:0.2f}'.format(step, perf), flush=True)
+                    npy_avg_perf[curr_task].append(perf)
+                    npy_avg_perf_all_tasks[curr_task].append(all_task_performances)
 
                 for log_task in args.tasks:
                     if interleave:
@@ -305,6 +287,7 @@ def main(args, model_save_dir):
                         prop_factor = 1
                     cur_loss = (total_loss[log_task] / args.log_interval) * prop_factor
                     train_writer.add_scalar(f'{log_task}/loss', cur_loss, global_step)
+                    npy_losses[log_task].append((cur_loss, global_step))
 
                     # print training progress
                     elapsed = time.time() - start_time
@@ -331,15 +314,6 @@ def main(args, model_save_dir):
             print(f"{value/nr_batches}: Training proportion for task {key}")
 
 
-        # # Plot training losses
-        # print("\n>>Plotting training losses")
-        # for task in args.tasks:
-        #     task_losses = train_writer.get_scalar(f'{task}/loss')
-        #     plt.plot(task_losses, label=f"{task}")
-        # plt.legend()
-        # plt.savefig(f"{model_save_dir}/training_losses.png")
-        # plt.show()
-
         #######################
         # Evaluation loss
         #######################
@@ -357,51 +331,50 @@ def main(args, model_save_dir):
                 print("-" * 89, flush=True)
                 test_writer.add_scalar(f'{task}/loss', val_loss, epoch)
 
-                # if val_ppl < previous_val_ppl - ppl_diff_threshold:  # all good, continue
-                #     previous_val_ppl = val_ppl
-                # else:  # no more improvement --> stop
-                #     print("Stopping training early!")
-                #     # we could load the previous checkpoint here, but won"t bother since usually the loss still decreases
-                #     break
+                val_ppl = torch.exp(torch.tensor(val_loss)).numpy().tolist()
 
-        # val_losses = test_writer.get_scalars("val_loss:")
-        # if val_losses:
-        #     fig = plt.figure()
-        #     x_length = len(next(iter(val_losses.values())))
-        #     for k, v in val_losses.items():
-        #         plt.plot(range(1, len(v) + 1), v, ".-", label=k)
-        #     plt.xticks(range(1, x_length + 1))
-        #     plt.title("Evaluation loss")
-        #     plt.legend()  # To draw legend
-        #     plt.savefig(f"{model_save_dir}/seed={args.seed}_epoch={epoch}_validation_loss.png",
-        #                 bbox_inches="tight", dpi=280)
-        #     plt.show()
+                if not best_val_loss or val_loss < best_val_loss:  # all good, continue
+                    best_val_loss = val_loss
+                    epochs_since_improvement[task] = 0
+                else:  # no more improvement --> stop
+                    print("Stopping training early!")
+                    epochs_since_improvement[task] += 1
+                    if epochs_since_improvement[task] > EARLY_STOPPING_PATIENCE:
+                        print("Stopping training early!")
+                        EARLY_STOPPING = True
+                        # we could load the previous checkpoint here, but won"t bother since usually the loss still decreases
+                        break
 
         # epoch training has finished here
         if args.TODO == "train+analyze":
             _logger.info(f"Running analysis for epoch {epoch}")
-            last_cluster_nr = variance_analyis(args=args, TRAINING_TASK_SPECS=TRAINING_TASK_SPECS, model=model,
-                                                  device=device)
-            # last_cluster_nr = concurrent_analysis(args=args, model_save_dir=model_save_dir, model=model,
-            #                                       cog_dataset_dict=cog_dataset_dict, epoch=epoch,
-            #                                       cog_accuracies=cog_accuracies,
-            #                                       acc_dict=acc_dict,
-            #                                       silhouette_scores_per_epoch=silhouette_scores_per_epoch,
-            #                                       TASK2DIM=TASK2DIM, TASK2MODE=TASK2MODE, lang_data_dict=lang_data_dict,
-            #                                       last_cluster_nr=last_cluster_nr)
+            silhouette_scores_per_epoch = variance_analyis(args=args, TRAINING_TASK_SPECS=TRAINING_TASK_SPECS, model=model,
+                                                  device=device, silhouette_scores_per_epoch=silhouette_scores_per_epoch)
 
-        #######################
-        # Plot clustering information (silhouette score heatmap)
-        #######################
-        # if args.TODO == "train+analyze":
-            # print(">>Plotting silhouette score heatmap")
-            # plot_silhouette_heatmap(args, model_save_dir, silhouette_scores_per_epoch, epoch)
 
     train_writer.flush()
     test_writer.flush()
     train_writer.close()
     test_writer.close()
 
+    np.save(os.path.join(model_save_dir, 'modellosscurve.npy'), npy_losses, allow_pickle=True)
+    np.save(os.path.join(model_save_dir, 'modelavgperf.npy'), npy_avg_perf, allow_pickle=True)
+    np.save(os.path.join(model_save_dir, 'modelavgperf_alltasks.npy'), npy_avg_perf_all_tasks, allow_pickle=True)
+
+    def plot_curves(filename):
+        x = np.load(os.path.join(model_save_dir, filename), allow_pickle=True).item()
+        for task, (loss, step) in x.items():
+            plt.plot(loss, step, label=task)
+        plt.legend()
+        plt.ylim(0, 0.5)
+        plt.xlim(0, 75)
+        plt.savefig(os.path.join(model_save_dir, filename.split(".")[0] + '.pdf'))
+        plt.show()
+        plt.close()
+
+    plot_curves('modellosscurve.npy')
+    plot_curves('modelavgperf.npy')
+    plot_curves('modelavgperf_alltasks.npy')
 
     # saving after training
     model_savename = f"model_epochs={epoch}.pt"
@@ -413,6 +386,7 @@ def main(args, model_save_dir):
     #########################
     #       TEST MODEL      #
     #########################
+    print("Testing model on language test sets after training", flush=True)
     for task in args.tasks:
         if task in language_tasks:
             print(f"Evaluating LM performance on test dataset for task {task}")

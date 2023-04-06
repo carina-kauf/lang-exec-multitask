@@ -1,7 +1,8 @@
 from dataloader_lang_tasks import build_text_dataset
 from dataloader_cog_tasks import build_cognitive_dataset
 from utils_general import find_matches
-import argparse
+from transformers import HfArgumentParser
+from args import TaskArguments, CTRNNModelArguments, RNNModelArguments, SharedModelArguments, TrainingArguments
 
 
 def build_training_tasks(args):
@@ -45,7 +46,7 @@ def build_training_tasks(args):
             try:
                 ob_size = env.observation_space.shape[0]
             except:
-                ob_size = env.vocab_size  # TODO added vor verbal WM tasks
+                ob_size = env.vocab_size  # TODO added for verbal WM tasks
             act_size = env.action_space.n
 
             TRAINING_TASK_SPECS[task] = {
@@ -61,16 +62,9 @@ def build_training_tasks(args):
                 "output_size": act_size}
 
             if task.startswith("contrib."):
-                if "German" in task:
-                    print(f"Getting German vocab and pretrained GloVe embeddings for contrib. task {task} (this may take a while) ...")
-                    vocab, aligned_embeddings = build_text_dataset(args=args, dataset_identifier="de_wiki", return_only_vocab=True)
-                else:
-                    print(f"Getting English vocab and pretrained GloVe embeddings for contrib. task {task} (this may take a while) ...")
-                    vocab, aligned_embeddings = build_text_dataset(args=args, dataset_identifier="wikitext", return_only_vocab=True)
-
-                TRAINING_TASK_SPECS[task]["pretrained_emb_weights"] = aligned_embeddings
-                TRAINING_TASK_SPECS[task]["vocab_size"] = len(vocab)
-                TRAINING_TASK_SPECS[task]["input_size"] = len(vocab)
+                TRAINING_TASK_SPECS[task]["pretrained_emb_weights"] = env.aligned_embeddings
+                TRAINING_TASK_SPECS[task]["vocab_size"] = env.vocab_size
+                TRAINING_TASK_SPECS[task]["input_size"] = env.vocab_size
                 TRAINING_TASK_SPECS[task]["using_pretrained_emb"] = True
 
     print("*" * 30)
@@ -96,20 +90,11 @@ def build_training_tasks(args):
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description='Test')
+    args = HfArgumentParser(
+        [TaskArguments, CTRNNModelArguments, RNNModelArguments, SharedModelArguments, TrainingArguments]
+    ).parse_args()
 
-    parser.add_argument('--batch_size', type=int, default=20, metavar='N',
-                        help='batch size')
-    parser.add_argument('--eval_batch_size', type=int, default=10, metavar='N',
-                        help='eval batch size')
-    parser.add_argument('--bptt', type=int, default=35,
-                        help='sequence length')
-    parser.add_argument('--seq_len', type=int, default=100,
-                        help='sequence length for cog tasks')
-    # parser.add_argument('--tasks', nargs='+', help='List of tasks', required=True)
-
-    args = parser.parse_args()
-    args.tasks = ["yang19", "wikitext"]
-    args.glove_emb = False
+    args.tasks = ["yang19", "wikitext", "contrib.DelayMatchSampleWord-v0"]
+    args.glove_emb = True
 
     build_training_tasks(args)

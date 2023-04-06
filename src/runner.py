@@ -77,21 +77,57 @@ def main(args):
 
 
 if __name__ == "__main__":
-    args = HfArgumentParser(
-        [TaskArguments, CTRNNModelArguments, RNNModelArguments, SharedModelArguments, TrainingArguments]
-    ).parse_args()
+    # args = HfArgumentParser(
+    #     [TaskArguments, CTRNNModelArguments, RNNModelArguments, SharedModelArguments, TrainingArguments]
+    # ).parse_args()
 
-    args.tasks = ["yang19", "wikitext"]
+    parser = argparse.ArgumentParser()
+    # TaskArguments
+    parser.add_argument("--glove_emb", action="store_true", default=False, help="Use GloVe embeddings")
+    parser.add_argument("--tasks", nargs="+", default=None)
+    parser.add_argument("--max_cluster_nr", type=int, default=20)
+    parser.add_argument("--TODO", default="train+analyze")
+    # CTRNNModelArguments
+    parser.add_argument("--CTRNN", action="store_true")
+    parser.add_argument("--nonlinearity", default='relu')
+    parser.add_argument("--sparse_model", action="store_true")
+    parser.add_argument("--sigma_rec", type=float, default=0.05)
+    # RNNModelArguments
+    parser.add_argument("--discrete_time_rnn", default=None)
+    parser.add_argument("--nlayers", type=int, default=1)
+    parser.add_argument("--dropout", type=float, default=0.2)
+    parser.add_argument("--tie_weights", action="store_true")
+    parser.add_argument("--hidden_size", type=int, default=256, help="Hidden size of RNN per layer")
+    # TrainingArguments
+    parser.add_argument("--dt", type=int, default=100)
+    parser.add_argument("--epochs", type=int, default=5)
+    parser.add_argument("--batch_size", type=int, default=20)
+    parser.add_argument("--eval_batch_size", type=int, default=10)
+    parser.add_argument("--bptt", type=int, default=35)
+    parser.add_argument("--seq_len", type=int, default=100)
+    parser.add_argument("--lr", type=float, default=1e-3)
+    parser.add_argument("--clip", type=float, default=1)
+    parser.add_argument("--seed", type=int, default=1)
+    parser.add_argument("--cuda", action="store_true")
+    parser.add_argument("--save", default='model.pt')
+    parser.add_argument("--log_level", default='INFO')
+    parser.add_argument("--log_interval", type=int, default=200)
+    parser.add_argument("--dry_run", action="store_true")
+    parser.add_argument("--training_yang", type=int, default=8000)
+    args = parser.parse_args()
 
-    args.glove_emb = True
+    if args.tasks is None:
+        args.tasks = ["yang19"]
+        print("No tasks specified, running with Yang et al. 2019 (ngym_usage) tasks!")
+
     if args.glove_emb and args.hidden_size != 300:
         print(f"Using GloVe embeddings, changing hidden size from {args.hidden_size} to 300!")
         args.hidden_size = 300
 
-    args.dry_run = True
     if args.dry_run:
         print("Running in dry run mode! (fewer epochs/training steps, etc.)")
-        args.log_interval = 20
+        args.log_interval = 200
+        args.epochs = 2
         
     if args.tasks == ["yang19"]:
         print("Running with Yang et al. 2019 (ngym_usage) parameters! (batch_size=20, seq_len=100, epochs=1, training=40000, hidden_size=256, dt=100)")
@@ -106,10 +142,14 @@ if __name__ == "__main__":
         args.hidden_size = 256
         args.dt = 100
 
-    print(f"Running with args: {args}")
-
     assert not all([args.CTRNN, args.discrete_time_rnn]), "Can't run with both CTRNN and discrete time RNN models!"
-    assert any([args.CTRNN, args.discrete_time_rnn]), "Must specify either CTRNN or discrete time RNN model!"
+
+    if not any([args.CTRNN, args.discrete_time_rnn]):
+        args.CTRNN = True
+        print("No model specified, running with CTRNN model by default!")
+
+    if any(x in args.tasks for x in ["wikitext", "pennchar", "penntreebank", "de_wiki"]):
+        assert args.glove_emb, "You probably want use pretrained embeddings for language tasks!"
 
     main(args)
-    print("Done! :)")
+    print("Finished.")

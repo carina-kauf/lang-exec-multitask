@@ -14,6 +14,10 @@ class TaskArguments:
         default=None,
         metadata={"help": "tasks to run"},
     )
+    max_cluster_nr: int = field(
+        default=20,
+        metadata={"help": "maximum number of clusters to use for unit analysis"},
+    )
     TODO: str = field(
         default="train+analyze",
     )
@@ -110,7 +114,7 @@ class TrainingArguments:
         metadata={"help": "initial learning rate"},
     )
     clip: float = field(
-        default=0.25,
+        default=1,
         metadata={"help": "gradient clipping"},
     )
     seed: int = field(
@@ -137,4 +141,3 @@ class TrainingArguments:
     training_yang: int = field(
         default=8000,
     )
-

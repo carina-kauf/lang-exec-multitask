@@ -1,6 +1,7 @@
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
+import re
 
 #####################
 # Yang19 CTRNN model
@@ -51,12 +52,17 @@ class CTRNN(nn.Module):
 
     def recurrence(self, input, hidden, input2hs, task):
         """Recurrence helper."""
+        taskname = task
+        if '.' in task:
+            # replace '.' with '-' for contrib tasks to avoid error 'module name can\'t contain "."
+            taskname = re.sub(r'\.', '-', task)
+
         try:
-            pre_activation = input2hs[task](input) + self.h2h(hidden)
+            pre_activation = input2hs[taskname](input) + self.h2h(hidden)
         except:
             print(f"Need torch.float32 tensor for cog. tasks but got tensor of type #{input.dtype}#,"
                   f"converting input format")
-            pre_activation = input2hs[task](input.to(torch.float32)) + self.h2h(hidden)
+            pre_activation = input2hs[taskname](input.to(torch.float32)) + self.h2h(hidden)
 
         # add recurrent unit noise
         mean = torch.zeros_like(pre_activation)
@@ -105,15 +111,19 @@ class Yang19_CTRNNModel(nn.Module):
         # define task-specific encoders and decoders
         encoders, decoders = nn.ModuleDict(), nn.ModuleDict()
         for task in TRAINING_TASK_SPECS.keys():
-            if TRAINING_TASK_SPECS[task]["using_pretrained_emb"]: #FIXME re-add for contrib tasks!
-                encoders.add_module(task, nn.Embedding.from_pretrained(TRAINING_TASK_SPECS[task]["pretrained_emb_weights"], freeze=True))
+            taskname = task
+            if '.' in task:
+                # replace '.' with '-' for contrib tasks to avoid error 'module name can\'t contain "."
+                taskname = re.sub(r'\.', '-', task)
+            if TRAINING_TASK_SPECS[task]["using_pretrained_emb"]:
+                encoders.add_module(taskname, nn.Embedding.from_pretrained(TRAINING_TASK_SPECS[task]["pretrained_emb_weights"], freeze=True))
             else:
                 if TRAINING_TASK_SPECS[task]["dataset"] == "lang":
-                    encoders.add_module(task, nn.Embedding(TRAINING_TASK_SPECS[task]["input_size"], args.hidden_size))
+                    encoders.add_module(taskname, nn.Embedding(TRAINING_TASK_SPECS[task]["input_size"], args.hidden_size))
                 else:
                     assert TRAINING_TASK_SPECS[task]["dataset"] == "cog"
-                    encoders.add_module(task, nn.Linear(TRAINING_TASK_SPECS[task]["input_size"], args.hidden_size))
-            decoders.add_module(task, nn.Linear(args.hidden_size, TRAINING_TASK_SPECS[task]["output_size"]))
+                    encoders.add_module(taskname, nn.Linear(TRAINING_TASK_SPECS[task]["input_size"], args.hidden_size))
+            decoders.add_module(taskname, nn.Linear(args.hidden_size, TRAINING_TASK_SPECS[task]["output_size"]))
 
         # build model
         self.encoders = encoders
@@ -122,8 +132,13 @@ class Yang19_CTRNNModel(nn.Module):
         self.decoders = decoders
 
     def forward(self, x, task):
+        taskname = task
+        if '.' in task:
+            # replace '.' with '-' for contrib tasks to avoid error 'module name can\'t contain "."
+            taskname = re.sub(r'\.', '-', task)
+
         rnn_activity, _ = self.rnn(x, self.encoders, task)
-        out = self.decoders[task](rnn_activity)
+        out = self.decoders[taskname](rnn_activity)
         out = out.view(-1, self.TRAINING_TASK_SPECS[task]["output_size"])
         return out, rnn_activity
 
