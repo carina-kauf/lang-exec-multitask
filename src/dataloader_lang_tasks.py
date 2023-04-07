@@ -294,7 +294,7 @@ def build_text_dataset(args, dataset_identifier, return_only_vocab=False):
 
     # TODO: add more datasets
     ID2HFPATH = {"wikitext": {"path": "wikitext", "name": "wikitext-2-raw-v1"},
-                 "penntreebank": {"path": "ptb_text_only", "name": "penn_treebank"}
+                 "penntreebank": {"name": "ptb_text_only"}
                  }
 
     if dataset_identifier in HF_datasets:
@@ -302,9 +302,12 @@ def build_text_dataset(args, dataset_identifier, return_only_vocab=False):
             dataset = load_dataset(dataset_identifier)
         except:
             try:
-                dataset = load_dataset(ID2HFPATH[dataset_identifier]["path"], ID2HFPATH[dataset_identifier]["name"])
+                dataset = load_dataset(ID2HFPATH[dataset_identifier]["name"]) #penntreebank
             except:
-                _logger.debug("Wrong path specification for HuggingFace datset.")
+                try:
+                    dataset = load_dataset(ID2HFPATH[dataset_identifier]["path"], ID2HFPATH[dataset_identifier]["name"])
+                except:
+                    _logger.debug("Wrong path specification for HuggingFace datset.")
 
     else:
         _logger.debug("Dataset not found in HuggingFace datasets. Loading from local.")
