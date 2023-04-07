@@ -99,6 +99,7 @@ if __name__ == "__main__":
     parser.add_argument("--tie_weights", action="store_true")
     parser.add_argument("--hidden_size", type=int, default=256, help="Hidden size of RNN per layer")
     # TrainingArguments
+    parser.add_argument("--optimizer", default='Adam')
     parser.add_argument("--dt", type=int, default=100)
     parser.add_argument("--epochs", type=int, default=5)
     parser.add_argument("--batch_size", type=int, default=20)
@@ -126,7 +127,7 @@ if __name__ == "__main__":
 
     if args.dry_run:
         print("Running in dry run mode! (fewer epochs/training steps, etc.)")
-        args.log_interval = 200
+        args.log_interval = 20
         args.epochs = 2
         
     if args.tasks == ["yang19"]:
@@ -136,7 +137,7 @@ if __name__ == "__main__":
         args.seq_len = 100
         args.epochs = 1
         if args.dry_run:
-            args.training_yang = 5000
+            args.training_yang = 50
         else:
             args.training_yang = 40000
         args.hidden_size = 256

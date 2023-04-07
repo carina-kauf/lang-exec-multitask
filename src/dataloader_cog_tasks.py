@@ -46,10 +46,10 @@ def build_cognitive_dataset(args, task_identifier, return_multienv=False):
         all_tasks = [task_identifier]
         add_task_index = False
 
-    if return_multienv:
-        _logger.info(f"Getting evaluation dataset/env for {all_tasks}")
-    else:
-        _logger.info(f"Building training dataset/env for: {all_tasks}")
+    # if return_multienv:
+    #     _logger.info(f"Getting evaluation dataset/env for {all_tasks}")
+    # else:
+    #     _logger.info(f"Building training dataset/env for: {all_tasks}")
 
     # Environment specs
     if "contrib." in task_identifier:

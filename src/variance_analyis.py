@@ -14,6 +14,7 @@ import re
 
 import pandas as pd
 import seaborn as sns
+from matplotlib.gridspec import GridSpec
 
 _logger = logging.getLogger(__name__)
 
@@ -145,7 +146,7 @@ def figure_settings():
     return figsize, rect, rect_color, rect_cb, fs, labelpad
 
 
-def cluster_plot(args, norm_task_variance, tasks):
+def cluster_plot(args, norm_task_variance, tasks, epoch, save_dir):
     """Plot clustering of hidden units based on task preference
     Args:
         norm_task_variance (np.ndarray): normalized task variance of hidden units
@@ -230,11 +231,12 @@ def cluster_plot(args, norm_task_variance, tasks):
     ax.set_xlim([0, len(labels)])
     ax.set_ylim([-1, 1])
     ax.axis('off')
+    plt.savefig(f"{save_dir}/epoch={epoch}_cluster_plot.png", bbox_inches="tight", dpi=180)
     fig.show()
     return sorted_norm_task_variance, silhouette_scores
 
 
-def plot_silhouette_heatmap(args, silhouette_scores_per_epoch):
+def plot_silhouette_heatmap(args, silhouette_scores_per_epoch, epoch, save_dir):
     """Plots a heatmap of the silhouette score per number of predefined clusters per epoch
 
     Args:
@@ -259,14 +261,13 @@ def plot_silhouette_heatmap(args, silhouette_scores_per_epoch):
     # ax = sns.heatmap(df)
     fig = plt.figure()
     ax = sns.heatmap(plot_df, annot=True, cmap="coolwarm") #viridis
-    ax.set(xlabel="Epoch number", ylabel="Nr. of clusters", title=f"Silhouette scores | Epoch {nr_epochs}")
+    ax.set(xlabel="Epoch number", ylabel="Nr. of clusters", title=f"Silhouette scores | Epoch {nr_epochs[-1]}")
     ax.collections[0].colorbar.set_label("Silhouette score")
-    # plt.savefig(f"{model_save_dir}/seed={args.seed}_epoch={epoch}_silhouette_heatmap.png",
-    #             bbox_inches="tight", dpi=280) #TODO: save
+    plt.savefig(f"{save_dir}/epoch={epoch}_silhouette_heatmap.png", bbox_inches="tight", dpi=180)
     plt.show()
 
 
-def plot_task_similarity(norm_task_variance, tasks):
+def plot_task_similarity(norm_task_variance, tasks, epoch, save_dir):
     """Plot task similarity matrix
     Args:
         norm_task_variance (np.ndarray): normalized task variance of hidden units
@@ -278,8 +279,6 @@ def plot_task_similarity(norm_task_variance, tasks):
     # fname = f'files/seed={args.seed}_task_similarity.pkl'
     # with open(fname, 'wb') as fout:
     #     pickle.dump(similarity, fout)
-
-    print(np.shape(norm_task_variance), np.shape(similarity))
 
     figsize, rect, rect_color, rect_cb, fs, labelpad = figure_settings()
 
@@ -302,17 +301,16 @@ def plot_task_similarity(norm_task_variance, tasks):
     cb.outline.set_linewidth(0.5)
     cb.set_label('Similarity', fontsize=fs, labelpad=0)
     plt.tick_params(axis='both', which='major', labelsize=fs)
-    # plt.savefig(f'XXX_task_similarity.png') #TODO: save
+    plt.savefig(f"{save_dir}/epoch={epoch}_task_similarity.png", bbox_inches="tight", dpi=180)
     plt.show()
 
 
-def plot_feature_similarity(sorted_norm_task_variance):
+def plot_feature_similarity(sorted_norm_task_variance, epoch, save_dir):
     """Plot feature similarity matrix
     Args:
         norm_task_variance (np.ndarray): normalized task variance of hidden units
             - shape: (n_task, n_units), e.g., (10, 300)
     """
-    print(f"Shape of sorted_norm_task_variance: {np.shape(sorted_norm_task_variance)}")
     X = sorted_norm_task_variance.T
     similarity = cosine_similarity(X)  # TODO: add other metric
     figsize, rect, rect_color, rect_cb, fs, labelpad = figure_settings()
@@ -332,19 +330,110 @@ def plot_feature_similarity(sorted_norm_task_variance):
     cb.outline.set_linewidth(0.5)
     cb.set_label('Similarity', fontsize=fs, labelpad=0)
     plt.tick_params(axis='both', which='major', labelsize=fs)
-    # plt.savefig(f'XXX_feature_similarity.png') #TODO: save
+    plt.savefig(f"{save_dir}/epoch={epoch}_feature_similarity.png", bbox_inches="tight", dpi=180)
     plt.show()
 
 
-def main(args, TRAINING_TASK_SPECS, model, device, silhouette_scores_per_epoch):
+def sorted_task_variance(task_variance_dict, env_id1, env_id2, f2_ax=None):
+    """Task-variance analysis of units, line plot, units ordered by env_id1 task variance"""
+    ind_sort = np.argsort(task_variance_dict[env_id1])
+    plot_ids = [env_id1, env_id2]
+    for id in plot_ids:
+        if f2_ax is None:
+            plt.plot(task_variance_dict[id][ind_sort], label=id)
+            plt.legend()
+            plt.title(f"Task variance of RNN units | Ordered by {env_id1} task variance")
+            plt.show()
+        else:
+            f2_ax.plot(task_variance_dict[id][ind_sort], label=id)
+            f2_ax.legend()
+            f2_ax.set_title(f"RNN units ordered by {env_id1} task variance")
+
+
+def scatter_task_variance(task_variance_dict, env_id1, env_id2, f2_ax=None):
+    """Task-variance analysis, scatter plot"""
+    if f2_ax is None:
+        plt.figure()
+        plt.scatter(task_variance_dict[env_id1], task_variance_dict[env_id2])
+        plt.xlabel(f"{env_id1}")
+        plt.ylabel(f"{env_id2}")
+        plt.title(f"{env_id1} vs. {env_id2}")
+        plt.show()
+    else:
+        f2_ax.scatter(task_variance_dict[env_id1], task_variance_dict[env_id2])
+        f2_ax.xaxis.set_label_text(f"{env_id1}")
+        f2_ax.yaxis.set_label_text(f"{env_id2}")
+        f2_ax.set_title(f"Task variance of RNN units | {env_id1} vs. {env_id2}")
+
+
+def frac_variance(task_variance_dict, env_id1, env_id2, f2_ax=None):
+    """Fractional variance analysis, histogram plot"""
+    print(f"{env_id1} | {env_id2}")
+    diff_variance = (task_variance_dict[env_id1] - task_variance_dict[env_id2])
+    sum_variance = task_variance_dict[env_id1] + task_variance_dict[env_id2]
+    frac_variance = diff_variance / sum_variance
+
+    if f2_ax is None:
+        plt.figure()
+        plt.hist(frac_variance, bins=100)
+        plt.xlabel(f'{env_id2} < -- > {env_id1}')
+        plt.xlim([-1, 1])
+        plt.title(f"Frac variance of RNN units | {env_id1} vs. {env_id2}")
+        plt.show()
+    else:
+        f2_ax.hist(frac_variance, bins=100)
+        f2_ax.xaxis.set_label_text(f'{env_id2} < -- > {env_id1}')
+        f2_ax.set_xlim([-1, 1])
+        f2_ax.set_title(f"Frac variance of RNN units | {env_id1} vs. {env_id2}")
+
+
+def gridplot(task_variance_dict, env_id1, env_ids, epoch, save_dir):
+    """Merging plot types"""
+
+    fig2 = plt.figure(constrained_layout=True, figsize=(15, 3 * len(env_ids)))
+    spec2 = GridSpec(ncols=3, nrows=len(env_ids), figure=fig2)
+    f2_ax = []
+
+    for i in range(len(env_ids)):
+        # plotting
+        j = 0
+        f2_ax.append(fig2.add_subplot(spec2[i, j]))
+        sorted_task_variance(task_variance_dict, env_id1, env_ids[i], f2_ax[-1])
+        #
+        j = 1
+        f2_ax.append(fig2.add_subplot(spec2[i, j]))
+        scatter_task_variance(task_variance_dict, env_id1, env_ids[i], f2_ax[-1])
+        #
+        j = 2
+        f2_ax.append(fig2.add_subplot(spec2[i, j]))
+        frac_variance(task_variance_dict, env_id1, env_ids[i], f2_ax[-1])
+        print("*" * 30)
+    fig2.suptitle(f"Unit variance analysis | Epoch {epoch}")
+    plt.savefig(f'{save_dir}/epoch={epoch}_gridplot.png', bbox_inches='tight', dpi=280)
+    fig2.show()
+
+
+def main(args, TRAINING_TASK_SPECS, model, device, silhouette_scores_per_epoch, epoch, save_dir):
 
     model.eval()
     task_variance_dict, norm_task_variance, activity_dict = \
         get_normalized_task_variance(args=args, TRAINING_TASK_SPECS=TRAINING_TASK_SPECS, model=model, device=device)
     tasks = list(task_variance_dict.keys())
-    sorted_norm_task_variance, silhouette_scores = cluster_plot(args=args, norm_task_variance=norm_task_variance, tasks=tasks)
+    sorted_norm_task_variance, silhouette_scores = cluster_plot(args=args, norm_task_variance=norm_task_variance, tasks=tasks,
+                                                                epoch=epoch, save_dir=save_dir)
     silhouette_scores_per_epoch.append(silhouette_scores)
-    plot_task_similarity(norm_task_variance, tasks)
-    plot_feature_similarity(sorted_norm_task_variance)
-    plot_silhouette_heatmap(args=args, silhouette_scores_per_epoch=silhouette_scores_per_epoch)
+    plot_task_similarity(norm_task_variance, tasks, epoch=epoch, save_dir=save_dir)
+    plot_feature_similarity(sorted_norm_task_variance, epoch=epoch, save_dir=save_dir)
+    plot_silhouette_heatmap(args=args, silhouette_scores_per_epoch=silhouette_scores_per_epoch,
+                            epoch=epoch, save_dir=save_dir)
+
+    language_tasks = [elm for elm in TRAINING_TASK_SPECS if TRAINING_TASK_SPECS[elm]['dataset'] == 'lang']
+    if len(language_tasks) > 0:
+        env_id1 = language_tasks[0]
+    else:
+        env_id1 = tasks[0]
+    env_ids = language_tasks + [[elm for elm in tasks if elm not in language_tasks][0]] + \
+             [[elm for elm in tasks if elm not in language_tasks][-1]]  #add 2 non-language tasks
+    gridplot(task_variance_dict=task_variance_dict, env_id1=env_id1, env_ids=env_ids, epoch=epoch, save_dir=save_dir)
+
     return silhouette_scores_per_epoch
