@@ -106,16 +106,18 @@ def align_vocab_emb(vocab, dataset_identifier):
         aligned_vocab: torchtext.vocab.Vocab object
         aligned_embeddings: torch.Tensor, shape=(len(aligned_vocab), 300)
     """
-    if re.match(r"\w{2}_wiki", dataset_identifier):
-        raise NotImplementedError("Pretrained embeddings for languages other than German and English are not supported yet.")
     if dataset_identifier == "de_wiki":
         print("Loading pretrained GloVe embeddings for German...")
         glove_pretrained_vectors = get_embedding_matrix(dataset_identifier)
+    elif dataset_identifier == "en_wiki":
+        print("Loading pretrained GloVe embeddings for English...")
+        glove_pretrained_vectors = torchtext.vocab.GloVe(name='6B', dim=300)
+    elif re.match(r"\w{2}_wiki", dataset_identifier):
+        raise NotImplementedError("Pretrained embeddings for languages other than German and English are not supported yet.")
     else:
         print("Loading pretrained GloVe embeddings for English...")
         glove_pretrained_vectors = torchtext.vocab.GloVe(name='6B', dim=300)
     # align glove embeddings with vocab
     aligned_embeddings, aligned_vocab = get_vecs_by_tokens(vocab.get_itos(), glove_pretrained_vectors)
-    # # save #TODO cache
 
     return aligned_vocab, aligned_embeddings
