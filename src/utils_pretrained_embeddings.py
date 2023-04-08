@@ -53,11 +53,14 @@ def get_vecs_by_tokens(vocab_from_train, glove_vectors):
     try:
         # keep only vocab tokens that have a corresponding vector (used for German embeddings from file)
         glove_vocab_tokens = glove_vectors.keys()
+       # remove eos and unk tokens for alignment
+        glove_vocab_tokens = [token for token in glove_vocab_tokens if token not in ['<eos>', '<unk>']]
         tokens_embeddings = [(token, torch.from_numpy(glove_vectors[token]).float()) for token in vocab_from_train if
                                 token in glove_vocab_tokens]
     except:
         # keep only vocab tokens that have a corresponding vector (used for torchtext.Glove)
         glove_vocab_tokens = glove_vectors.stoi.keys()
+        glove_vocab_tokens = [token for token in glove_vocab_tokens if token not in ['<eos>', '<unk>']]
         tokens_embeddings = [(token, glove_vectors[token]) for token in vocab_from_train if token in glove_vocab_tokens]
 
     tokens = [token for token, _ in tokens_embeddings]

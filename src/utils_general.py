@@ -81,6 +81,49 @@ def mask2d(N_x, N_y, cutoff, periodic):
     return dist
 
 
+
+
+def mask2d(hidden_dim, cutoff, periodic):
+    """Define anatomical mask for h2h weights in CTRNN
+    Source: https://github.com/mikailkhona/Multi-Task-learning/blob/main/Multitask_with_mask.ipynb
+    Create a 2d mask of distances between neurons
+    A neuron is connected to all neurons within a certain distance
+    Args:
+        :param hidden_dim: number of neurons in the network
+        :param cutoff: cutoff distance
+        :param periodic: if True, use periodic boundary conditions
+    Returns:
+        :2d mask of distances of shape (hidden_dim, hidden_dim)
+    """
+
+    # create 2d sheet of coordinates
+    N = int(np.sqrt(hidden_dim))
+    x1 = np.linspace(-N // 2, N // 2 - 1, N)
+    x1 = np.expand_dims(x1, axis=1)
+    x2 = np.linspace(-N // 2, N // 2 - 1, N)
+    x2 = np.expand_dims(x2, axis=1)
+    x_coordinates = np.expand_dims(np.repeat(x1, N, axis=0).reshape(N, N).transpose().flatten(), axis=1)
+    y_coordinates = np.expand_dims(np.repeat(x2, N, axis=0).reshape(N, N).flatten(), axis=1)
+
+    # calculate torus distance on 2d sheet
+    distances_x = cdist(x_coordinates, x_coordinates)
+    distances_y = cdist(y_coordinates, y_coordinates)
+
+    if periodic:
+        distances_y = np.minimum(N - distances_y, distances_y)
+        distances_x = np.minimum(N - distances_x, distances_x)
+
+    distances = np.sqrt(np.square(distances_x) + np.square(distances_y))
+    dist = distances.reshape(N, N, N, N)
+    dist = dist.reshape(hidden_dim, hidden_dim)
+    assert dist.shape == (hidden_dim, hidden_dim)
+
+    # mask connections based on distance
+    dist[dist < cutoff] = 1
+    dist[dist > cutoff - 1] = 0
+    return dist
+
+
 def sparsemask2d(N_x, N_y, sparsity):
     """
     Define Erdos-Renyi sparse mask for h2h weights in CTRNN
