@@ -16,6 +16,9 @@ import pandas as pd
 import seaborn as sns
 from matplotlib.gridspec import GridSpec
 
+plt.rcParams['font.family'] = 'DeJavu Serif'
+plt.rcParams['font.serif'] = ['Times New Roman']
+
 _logger = logging.getLogger(__name__)
 
 
@@ -259,7 +262,7 @@ def plot_silhouette_heatmap(args, silhouette_scores_per_epoch, epoch, save_dir):
     plot_df = plot_df.T #since we want epochs to be on the x-axis
 
     # ax = sns.heatmap(df)
-    fig = plt.figure()
+    plt.figure()
     ax = sns.heatmap(plot_df, annot=True, cmap="coolwarm") #viridis
     ax.set(xlabel="Epoch number", ylabel="Nr. of clusters", title=f"Silhouette scores | Epoch {nr_epochs[-1]}")
     ax.collections[0].colorbar.set_label("Silhouette score")
@@ -340,6 +343,7 @@ def sorted_task_variance(task_variance_dict, env_id1, env_id2, f2_ax=None):
     plot_ids = [env_id1, env_id2]
     for id in plot_ids:
         if f2_ax is None:
+            plt.figure()
             plt.plot(task_variance_dict[id][ind_sort], label=id)
             plt.legend()
             plt.title(f"Task variance of RNN units | Ordered by {env_id1} task variance")

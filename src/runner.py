@@ -9,9 +9,6 @@ import re
 
 _logger = logging.getLogger(__name__)
 
-from transformers import HfArgumentParser
-from args import TaskArguments, CTRNNModelArguments, RNNModelArguments, SharedModelArguments, TrainingArguments
-
 
 def shorten_task_names(tasks):
     """Shorten task names for saving purposes"""
@@ -99,7 +96,8 @@ if __name__ == "__main__":
     parser.add_argument("--tie_weights", action="store_true")
     parser.add_argument("--hidden_size", type=int, default=256, help="Hidden size of RNN per layer")
     # TrainingArguments
-    parser.add_argument("--optimizer", default='Adam')
+    parser.add_argument("--optimizer", default='AdamW')
+    parser.add_argument("--weighted_loss", action="store_true")
     parser.add_argument("--dt", type=int, default=100)
     parser.add_argument("--epochs", type=int, default=5)
     parser.add_argument("--batch_size", type=int, default=20)
@@ -149,8 +147,9 @@ if __name__ == "__main__":
         args.CTRNN = True
         print("No model specified, running with CTRNN model by default!")
 
-    if any(x in args.tasks for x in ["wikitext", "pennchar", "penntreebank", "de_wiki"]):
-        assert args.glove_emb, "You probably want use pretrained embeddings for language tasks!"
+    if any(x in args.tasks for x in ["wikitext", "pennchar", "penntreebank", "de_wiki"]) and not args.glove_emb:
+        print("Running with language tasks, using GloVe embeddings by default!")
+        args.glove_emb = True
 
     main(args)
     print("Finished.")
