@@ -27,7 +27,7 @@ def get_savedir(args):
         model_save_dir = "../results_local"
     else:
         model_save_dir = "../results_om"
-        slurm_id = os.environ["SLURM_JOB_ID"]
+        slurm_id = os.getenv('SLURM_JOB_ID')
 
     if args.CTRNN:
         dir_name = f"CTRNN_{args.nonlinearity}"
