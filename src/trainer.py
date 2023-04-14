@@ -246,6 +246,7 @@ def main(args, model_save_dir):
     npy_avg_perf = {task: [] for task in cognitive_tasks}
     npy_avg_perf_all_tasks = {task: [] for task in cognitive_tasks}
     npy_losses = {task: [] for task in args.tasks}
+    valid_losses = {task: [] for task in args.tasks}
 
     train_iterator = trange(1, int(args.epochs) + 1, desc="Epoch")
     for epoch in train_iterator:
@@ -413,7 +414,17 @@ def main(args, model_save_dir):
 
                 joint_val_loss += val_loss
                 val_ppl = torch.exp(torch.tensor(val_loss)).numpy().tolist()
+                valid_losses[task].append((val_loss, epoch))
         test_writer.add_scalars(f'valid_loss', scalar_dict, epoch)
+        plt.figure()
+        for task, value_steps in valid_losses.items():
+            values, steps = zip(*value_steps)
+            plt.plot(steps, values, label=task, marker='o')
+        plt.title("valid_losses")
+        plt.legend(loc='center left', bbox_to_anchor=(1, 0.5))
+        plt.savefig(f"{model_save_dir}/epoch={epoch}_valid_losses.png", bbox_inches='tight')
+        plt.show()
+        plt.close()
 
         # Save checkpoint
         save_checkpoint({
