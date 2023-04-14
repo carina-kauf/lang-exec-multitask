@@ -387,6 +387,11 @@ def main(args, model_save_dir):
             plt.show()
             plt.close()
 
+        # save losses and performance
+        np.save(os.path.join(model_save_dir, f'modellosscurve_epoch={epoch}.npy'), npy_losses, allow_pickle=True)
+        np.save(os.path.join(model_save_dir, f'modelavgperf_epoch={epoch}.npy'), npy_avg_perf, allow_pickle=True)
+        np.save(os.path.join(model_save_dir, f'modelavgperf_alltasks_epoch={epoch}.npy'), npy_avg_perf_all_tasks,
+                allow_pickle=True)
         #######################
         # Evaluation loss
         #######################
