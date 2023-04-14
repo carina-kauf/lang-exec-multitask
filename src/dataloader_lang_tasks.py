@@ -278,7 +278,11 @@ def build_text_dataset(args, dataset_identifier, return_only_vocab=False):
         - aligned_embeddings (np.array): The aligned embeddings.
     """
     # load data
-    HF_datasets = list_datasets()
+    try:
+        HF_datasets = list_datasets() #TODO: add back again and take line below out, get requests.exceptions.ConnectionError here
+    except:
+        print("Probably got a connection error, so using a list of predefined HF datasets.")
+        HF_datasets = ["wikitext", "penntreebank"]
     try:
         local_datapath = os.path.abspath("../data/")
         assert os.path.exists(local_datapath)

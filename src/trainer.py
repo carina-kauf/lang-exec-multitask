@@ -383,7 +383,6 @@ def main(args, model_save_dir):
                     sns.lineplot(x="steps", y="values", hue="names", data=df, ax=ax, marker="o")
                 else:
                     raise NotImplementedError
-            plt.legend()
             plt.title(name)
             plt.legend(loc='center left', bbox_to_anchor=(1, 0.5))
             plt.savefig(f"{model_save_dir}/epoch={epoch}_{name}.png", bbox_inches='tight')

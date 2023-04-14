@@ -169,6 +169,9 @@ def cluster_plot(args, norm_task_variance, tasks, epoch, save_dir):
     plt.plot(n_clusters, silhouette_scores, 'o-')
     plt.xlabel('Number of clusters')
     plt.ylabel('Silhouette score')
+    plt.title('Silhouette score for clustering')
+    plt.close()
+
 
     # Use the number of clusters that maximizes the silhouette score for clustering
     n_cluster = n_clusters[np.argmax(silhouette_scores)]
@@ -235,7 +238,8 @@ def cluster_plot(args, norm_task_variance, tasks, epoch, save_dir):
     ax.set_ylim([-1, 1])
     ax.axis('off')
     plt.savefig(f"{save_dir}/epoch={epoch}_cluster_plot.png", bbox_inches="tight", dpi=180)
-    fig.show()
+    plt.show()
+    plt.close()
     return sorted_norm_task_variance, silhouette_scores
 
 
@@ -268,6 +272,7 @@ def plot_silhouette_heatmap(args, silhouette_scores_per_epoch, epoch, save_dir):
     ax.collections[0].colorbar.set_label("Silhouette score")
     plt.savefig(f"{save_dir}/epoch={epoch}_silhouette_heatmap.png", bbox_inches="tight", dpi=180)
     plt.show()
+    plt.close()
 
 
 def plot_task_similarity(norm_task_variance, tasks, epoch, save_dir):
@@ -306,6 +311,7 @@ def plot_task_similarity(norm_task_variance, tasks, epoch, save_dir):
     plt.tick_params(axis='both', which='major', labelsize=fs)
     plt.savefig(f"{save_dir}/epoch={epoch}_task_similarity.png", bbox_inches="tight", dpi=180)
     plt.show()
+    plt.close()
 
 
 def plot_feature_similarity(sorted_norm_task_variance, epoch, save_dir):
@@ -335,6 +341,7 @@ def plot_feature_similarity(sorted_norm_task_variance, epoch, save_dir):
     plt.tick_params(axis='both', which='major', labelsize=fs)
     plt.savefig(f"{save_dir}/epoch={epoch}_feature_similarity.png", bbox_inches="tight", dpi=180)
     plt.show()
+    plt.close()
 
 
 def sorted_task_variance(task_variance_dict, env_id1, env_id2, f2_ax=None):
@@ -348,6 +355,7 @@ def sorted_task_variance(task_variance_dict, env_id1, env_id2, f2_ax=None):
             plt.legend()
             plt.title(f"Task variance of RNN units | Ordered by {env_id1} task variance")
             plt.show()
+            plt.close()
         else:
             f2_ax.plot(task_variance_dict[id][ind_sort], label=id)
             f2_ax.legend()
@@ -363,6 +371,7 @@ def scatter_task_variance(task_variance_dict, env_id1, env_id2, f2_ax=None):
         plt.ylabel(f"{env_id2}")
         plt.title(f"{env_id1} vs. {env_id2}")
         plt.show()
+        plt.close()
     else:
         f2_ax.scatter(task_variance_dict[env_id1], task_variance_dict[env_id2])
         f2_ax.xaxis.set_label_text(f"{env_id1}")
@@ -384,6 +393,7 @@ def frac_variance(task_variance_dict, env_id1, env_id2, f2_ax=None):
         plt.xlim([-1, 1])
         plt.title(f"Frac variance of RNN units | {env_id1} vs. {env_id2}")
         plt.show()
+        plt.close()
     else:
         f2_ax.hist(frac_variance, bins=100)
         f2_ax.xaxis.set_label_text(f'{env_id2} < -- > {env_id1}')
@@ -414,7 +424,8 @@ def gridplot(task_variance_dict, env_id1, env_ids, epoch, save_dir):
         print("*" * 30)
     fig2.suptitle(f"Unit variance analysis | Epoch {epoch}")
     plt.savefig(f'{save_dir}/epoch={epoch}_gridplot.png', bbox_inches='tight', dpi=280)
-    fig2.show()
+    plt.show()
+    plt.close()
 
 
 def main(args, TRAINING_TASK_SPECS, model, device, silhouette_scores_per_epoch, epoch, save_dir):
