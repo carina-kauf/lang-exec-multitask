@@ -84,13 +84,11 @@ def evaluate(args, model, criterion, data_source, mode): #FIXME add early stoppi
 
 def get_writers(model_save_dir):
     """ Define tensorboard writers """
-    writer_name = re.sub("/", "+", model_save_dir)
-    writer_name = "+".join(writer_name.split("+")[2:])
-    train_log_path = os.path.abspath(f"tensorboard_runs/{writer_name}/train_logs")
+    train_log_path = os.path.abspath(f"{model_save_dir}/train_logs")
     train_writer = SummaryWriter(train_log_path)
-    test_log_path = os.path.abspath(f"tensorboard_runs/{writer_name}/test_logs")
+    test_log_path = os.path.abspath(f"{model_save_dir}/test_logs")
     test_writer = SummaryWriter(test_log_path)
-    performance_log_path = os.path.abspath(f"tensorboard_runs/{writer_name}/performance_logs")
+    performance_log_path = os.path.abspath(f"{model_save_dir}/performance_logs")
     performance_writer = SummaryWriter(performance_log_path)
     return train_writer, test_writer, performance_writer
 

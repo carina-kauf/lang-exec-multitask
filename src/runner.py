@@ -27,6 +27,7 @@ def get_savedir(args):
         model_save_dir = "../results_local"
     else:
         model_save_dir = "../results_om"
+        slurm_id = os.environ["SLURM_JOB_ID"]
 
     if args.CTRNN:
         dir_name = f"CTRNN_{args.nonlinearity}"
@@ -40,7 +41,10 @@ def get_savedir(args):
     model_save_dir = os.path.join(model_save_dir, dir_name)
     os.makedirs(model_save_dir, exist_ok=True)
 
-    name = f"nrlayers={args.nlayers}_epochs={args.epochs}_seed={args.seed}_gloveemb={args.glove_emb}" #TODO figure out which info I need here
+    if not os.getenv("USER") == "ckauf":
+        name = f"nrlayers={args.nlayers}_epochs={args.epochs}_seed={args.seed}_gloveemb={args.glove_emb}" #TODO figure out which info I need here
+    else:
+        name = f"slurm_id={slurm_id}_optimizer={args.optimizer}"
 
     if args.dry_run:
         name = f"dry_run_{name}"
