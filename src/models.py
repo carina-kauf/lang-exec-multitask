@@ -180,14 +180,14 @@ class Multitask_RNNModel(nn.Module):
         # define model
         self.encoders = encoders
 
-        if args.discrete_time_rnn in ['LSTM', 'GRU']:
-            self.rnn = getattr(nn, args.discrete_time_rnn)(args.hidden_size, args.hidden_size, args.nlayers, dropout=dropout)
-        elif args.discrete_time_rnn in ['RNN_TANH', 'RNN_RELU']:
-            nonlinearity = {'RNN_TANH': 'tanh', 'RNN_RELU': 'relu'}[args.discrete_time_rnn]
+        if args.rnn_type in ['LSTM', 'GRU']:
+            self.rnn = getattr(nn, args.rnn_type)(args.hidden_size, args.hidden_size, args.nlayers, dropout=dropout)
+        elif args.rnn_type in ['RNN_TANH', 'RNN_RELU']:
+            nonlinearity = {'RNN_TANH': 'tanh', 'RNN_RELU': 'relu'}[args.rnn_type]
             self.rnn = nn.RNN(args.hidden_size, args.hidden_size, args.nlayers, nonlinearity=args.nonlinearity, dropout=dropout)
-        elif args.discrete_time_rnn in ['RNN_SOFTPLUS', 'RNN_RELU_TEST']:
+        elif args.rnn_type in ['RNN_SOFTPLUS', 'RNN_RELU_TEST']:
             try:
-                nonlinearity = {'RNN_SOFTPLUS': nn.Softplus(), 'RNN_RELU_TEST': nn.ReLU()}[args.discrete_time_rnn]
+                nonlinearity = {'RNN_SOFTPLUS': nn.Softplus(), 'RNN_RELU_TEST': nn.ReLU()}[args.rnn_type]
                 self.rnn = RNNLayer(args.hidden_size, args.hidden_size, nonlinearity)
             except KeyError:
                 raise ValueError("""An invalid option for `--model` was supplied,
@@ -195,7 +195,7 @@ class Multitask_RNNModel(nn.Module):
         else:
             raise NotImplementedError("Unknown!")
 
-        self.rnn_type = args.discrete_time_rnn
+        self.rnn_type = args.rnn_type
         self.decoders = decoders
 
         # Optionally tie weights as in:

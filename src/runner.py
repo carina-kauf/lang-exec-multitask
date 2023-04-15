@@ -94,7 +94,8 @@ if __name__ == "__main__":
     parser.add_argument("--sparse_model", action="store_true")
     parser.add_argument("--sigma_rec", type=float, default=0.05)
     # RNNModelArguments
-    parser.add_argument("--discrete_time_rnn", default='RNN_RELU')
+    parser.add_argument("--discrete_time_rnn", action="store_true")
+    parser.add_argument("--rnn_type", default='RNN_RELU')
     parser.add_argument("--nlayers", type=int, default=1)
     parser.add_argument("--dropout", type=float, default=0.2)
     parser.add_argument("--tie_weights", action="store_true")

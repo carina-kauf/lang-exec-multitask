@@ -150,7 +150,7 @@ def main(args, model_save_dir):
     if args.CTRNN:
         model = Yang19_CTRNNModel(args=args, TRAINING_TASK_SPECS=TRAINING_TASK_SPECS, mask=h2h_mask2d).to(device)
     else:
-        model = Multitask_RNNModel(TRAINING_TASK_SPECS=TRAINING_TASK_SPECS, rnn_type=args.discrete_time_rnn, hidden_size=args.hidden_size,
+        model = Multitask_RNNModel(TRAINING_TASK_SPECS=TRAINING_TASK_SPECS, rnn_type=args.rnn_type, hidden_size=args.hidden_size,
                                    nlayers=args.nlayers, dropout=args.dropout, tie_weights=args.tied).to(device)
 
     # print model architecture & parameter groups that are being updated
