@@ -447,8 +447,9 @@ def main(args, TRAINING_TASK_SPECS, model, device, silhouette_scores_per_epoch, 
         env_id1 = language_tasks[0]
     else:
         env_id1 = tasks[0]
-    env_ids = language_tasks + [[elm for elm in tasks if elm not in language_tasks][0]] + \
-             [[elm for elm in tasks if elm not in language_tasks][-1]]  #add 2 non-language tasks
-    gridplot(task_variance_dict=task_variance_dict, env_id1=env_id1, env_ids=env_ids, epoch=epoch, save_dir=save_dir)
+    if len(args.tasks) > 1:
+        env_ids = language_tasks + [[elm for elm in tasks if elm not in language_tasks][0]] + \
+                 [[elm for elm in tasks if elm not in language_tasks][-1]]  #add 2 non-language tasks
+        gridplot(task_variance_dict=task_variance_dict, env_id1=env_id1, env_ids=env_ids, epoch=epoch, save_dir=save_dir)
 
     return silhouette_scores_per_epoch
