@@ -246,7 +246,7 @@ def main(args, model_save_dir):
     npy_avg_perf = {task: [] for task in cognitive_tasks}
     npy_avg_perf_all_tasks = {task: [] for task in cognitive_tasks}
     npy_losses = {task: [] for task in args.tasks}
-    valid_losses = {task: [] for task in args.tasks}
+    valid_losses = {task: [] for task in language_tasks}
 
     train_iterator = trange(1, int(args.epochs) + 1, desc="Epoch")
     for epoch in train_iterator:
@@ -396,35 +396,36 @@ def main(args, model_save_dir):
         #######################
         # Evaluation loss
         #######################
-        print("\n", flush=True)
-        _logger.info("Evaluating LM performance on validation dataset")
-        joint_val_loss = 0
-        scalar_dict = {}
-        for task in args.tasks:
-            if task in language_tasks:
-                print(f"Evaluating LM performance on validation dataset for task {task}")
-                val_loss = evaluate(args, model, criterion, TRAINING_TASK_SPECS[task]["val_data"], task)
-                print("-" * 89, flush=True)
-                # print training progress
-                elapsed = time.time() - start_time
-                stats = f"{task} | epoch {epoch:3d} | {elapsed} | valid loss {val_loss:5.2f}  | ppl {math.exp(val_loss):8.2f}"
-                print(stats, flush=True)
-                print("-" * 89, flush=True)
-                scalar_dict[task] = val_loss
+        if len(language_tasks) > 0:
+            print("\n", flush=True)
+            _logger.info("Evaluating LM performance on validation dataset")
+            joint_val_loss = 0
+            scalar_dict = {}
+            for task in args.tasks:
+                if task in language_tasks:
+                    print(f"Evaluating LM performance on validation dataset for task {task}")
+                    val_loss = evaluate(args, model, criterion, TRAINING_TASK_SPECS[task]["val_data"], task)
+                    print("-" * 89, flush=True)
+                    # print training progress
+                    elapsed = time.time() - start_time
+                    stats = f"{task} | epoch {epoch:3d} | {elapsed} | valid loss {val_loss:5.2f}  | ppl {math.exp(val_loss):8.2f}"
+                    print(stats, flush=True)
+                    print("-" * 89, flush=True)
+                    scalar_dict[task] = val_loss
 
-                joint_val_loss += val_loss
-                val_ppl = torch.exp(torch.tensor(val_loss)).numpy().tolist()
-                valid_losses[task].append((val_loss, epoch))
-        test_writer.add_scalars(f'valid_loss', scalar_dict, epoch)
-        plt.figure()
-        for task, value_steps in valid_losses.items():
-            values, steps = zip(*value_steps)
-            plt.plot(steps, values, label=task, marker='o')
-        plt.title("valid_losses")
-        plt.legend(loc='center left', bbox_to_anchor=(1, 0.5))
-        plt.savefig(f"{model_save_dir}/epoch={epoch}_valid_losses.png", bbox_inches='tight')
-        plt.show()
-        plt.close()
+                    joint_val_loss += val_loss
+                    val_ppl = torch.exp(torch.tensor(val_loss)).numpy().tolist()
+                    valid_losses[task].append((val_loss, epoch))
+            test_writer.add_scalars(f'valid_loss', scalar_dict, epoch)
+            plt.figure()
+            for task, value_steps in valid_losses.items():
+                values, steps = zip(*value_steps)
+                plt.plot(steps, values, label=task, marker='o')
+            plt.title("valid_losses")
+            plt.legend(loc='center left', bbox_to_anchor=(1, 0.5))
+            plt.savefig(f"{model_save_dir}/epoch={epoch}_valid_losses.png", bbox_inches='tight')
+            plt.show()
+            plt.close()
 
         # Save checkpoint
         save_checkpoint({
