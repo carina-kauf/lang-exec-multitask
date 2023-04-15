@@ -101,24 +101,6 @@ def get_weighted_loss(losses):
     return weighted_loss
 
 
-# def scale_losses(losses, args):
-#     """ Scales losses to be comparable across tasks """
-#     if args.loss_scaling == "max":
-#         # scale by max loss
-#         max_loss = max(losses)
-#         losses = [loss / max_loss for loss in losses]
-#     elif args.loss_scaling == "mean":
-#         # scale by mean loss
-#         mean_loss = np.mean(losses)
-#         losses = [loss / mean_loss for loss in losses]
-#     elif args.loss_scaling == "none":
-#         # don't scale
-#         pass
-#     else:
-#         raise ValueError("Loss scaling method not recognized!")
-#     return losses
-
-
 def main(args, model_save_dir):
     """ Main function
     args: Arguments
@@ -187,7 +169,7 @@ def main(args, model_save_dir):
         epoch_length = args.training_yang
 
     if args.dry_run:
-        epoch_length = 200
+        epoch_length = 100
 
     #######################################
     #  Evaluate model prior to training   #
@@ -199,7 +181,6 @@ def main(args, model_save_dir):
         silhouette_scores_per_epoch = variance_analyis(args=args, TRAINING_TASK_SPECS=TRAINING_TASK_SPECS,
                                                        model=model, device=device, silhouette_scores_per_epoch=silhouette_scores_per_epoch,
                                                        epoch=0, save_dir=model_save_dir)
-
 
     #########################
     #      TRAIN MODEL      #
@@ -234,7 +215,6 @@ def main(args, model_save_dir):
     scheduler = LambdaLR(optimizer, lr_lambda=warmup_lambda)
 
     print("\n".join(["#" * 24, "##### TRAIN MODEL #####", "#" * 24]), flush=True)
-
 
     global_step = 0
     # define variable for early stopping
@@ -365,7 +345,7 @@ def main(args, model_save_dir):
                                                     epoch=epoch, save_dir=model_save_dir)
 
         # plot loss and performance curves
-        for name, x in zip(["losses", "cog_avg_perfs", "cog_avg_perfs_all_tasks"], [npy_losses, npy_avg_perf, npy_avg_perf_all_tasks]):
+        for name, x in zip(["train_losses", "cog_avg_perfs", "cog_avg_perfs_all_tasks"], [npy_losses, npy_avg_perf, npy_avg_perf_all_tasks]):
             plt.figure()
             for task, value_steps in x.items():
                 if isinstance(value_steps[0][0], float):

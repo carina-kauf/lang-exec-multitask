@@ -33,9 +33,9 @@ def get_activity(args, model, task, tasks_env_dict, TRAINING_TASK_SPECS, device=
 
     if tasks_env_dict[task]["dataset"] == "lang":
         if not args.CTRNN:
-            hidden = model.init_hidden(10)  # eval batch size
+            hidden = model.init_hidden(args.eval_batch_size)
         val_data = TRAINING_TASK_SPECS[task]["val_data"]
-        num_trial = int(num_trial / 10)  # TODO check: added since each batch has 10 trials
+        num_trial = int(num_trial / args.eval_batch_size)  # TODO check: added since each batch has args.eval_batch_size trials
     else:
         if not args.CTRNN:
             hidden = model.init_hidden(1)
