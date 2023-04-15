@@ -161,6 +161,8 @@ class Multitask_RNNModel(nn.Module):
     def __init__(self, args, TRAINING_TASK_SPECS, dropout=0.5):
         super(Multitask_RNNModel, self).__init__()
 
+        self.TRAINING_TASK_SPECS = TRAINING_TASK_SPECS
+
         self.tasks = list(TRAINING_TASK_SPECS.keys())
         self.drop = nn.Dropout(dropout)
         encoders, decoders = nn.ModuleDict(), nn.ModuleDict()

@@ -32,7 +32,7 @@ def get_savedir(args):
     if args.CTRNN:
         dir_name = f"CTRNN_{args.nonlinearity}"
     else:
-        dir_name = f"{args.model}"
+        dir_name = f"{args.rnn_type}"
     _logger.info(f"*********** Running with {dir_name} model ***********")
 
     names_for_file = shorten_task_names(args.tasks)

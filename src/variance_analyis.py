@@ -46,7 +46,7 @@ def get_activity(args, model, task, tasks_env_dict, TRAINING_TASK_SPECS, device=
             if args.CTRNN:
                 action_pred, activity = model(x=inputs, task=task)
             else:
-                action_pred, activity, hidden = model(input=inputs, hidden=hidden, task=task)
+                action_pred, hidden, activity = model(input=inputs, hidden=hidden, task=task)
         else:
             if 'contrib' not in task:
                 eval_env.set_i(tasks_env_dict[task]["index"])
@@ -63,7 +63,7 @@ def get_activity(args, model, task, tasks_env_dict, TRAINING_TASK_SPECS, device=
                 # can't index with task here, because the modules in the model are defined with the overall task set identifier
                 action_pred, activity = model(x=inputs, task=tasks_env_dict[task]["task_set"])
             else:
-                action_pred, activity = model(input=inputs, hidden=hidden, task=tasks_env_dict[task]["task_set"])
+                action_pred, hidden, activity = model(input=inputs, hidden=hidden, task=tasks_env_dict[task]["task_set"])
 
         activity = activity.detach().cpu().numpy()
         activity_list.append(activity)
