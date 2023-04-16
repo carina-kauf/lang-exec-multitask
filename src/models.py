@@ -169,15 +169,19 @@ class Multitask_RNNModel(nn.Module):
 
         # define task-specific encoders and decoders
         for task in self.tasks:
+            taskname = task
+            if '.' in task:
+                # replace '.' with '-' for contrib tasks to avoid error 'module name can\'t contain "."
+                taskname = re.sub(r'\.', '-', task)
             if TRAINING_TASK_SPECS[task]["pretrained_emb_weights"] is not None:
-                encoders.add_module(task, nn.Embedding.from_pretrained(TRAINING_TASK_SPECS[task]["pretrained_emb_weights"], freeze=True))
+                encoders.add_module(taskname, nn.Embedding.from_pretrained(TRAINING_TASK_SPECS[task]["pretrained_emb_weights"], freeze=True))
             else:
                 if TRAINING_TASK_SPECS[task]["dataset"] == "lang":
-                    encoders.add_module(task, nn.Embedding(TRAINING_TASK_SPECS[task]["input_size"], args.hidden_size))
+                    encoders.add_module(taskname, nn.Embedding(TRAINING_TASK_SPECS[task]["input_size"], args.hidden_size))
                 else:
                     assert TRAINING_TASK_SPECS[task]["dataset"] == "cog"
-                    encoders.add_module(task, nn.Linear(TRAINING_TASK_SPECS[task]["input_size"], args.hidden_size))
-            decoders.add_module(task, nn.Linear(args.hidden_size,TRAINING_TASK_SPECS[task]["output_size"]))
+                    encoders.add_module(taskname, nn.Linear(TRAINING_TASK_SPECS[task]["input_size"], args.hidden_size))
+            decoders.add_module(taskname, nn.Linear(args.hidden_size,TRAINING_TASK_SPECS[task]["output_size"]))
 
         # define model
         self.encoders = encoders
@@ -208,7 +212,11 @@ class Multitask_RNNModel(nn.Module):
         # https://arxiv.org/abs/1611.01462
         if args.tie_weights:
             for task in self.tasks:
-                self.decoders[task].weight = self.encoders[task].weight
+                taskname = task
+                if '.' in task:
+                    # replace '.' with '-' for contrib tasks to avoid error 'module name can\'t contain "."
+                    taskname = re.sub(r'\.', '-', task)
+                self.decoders[taskname].weight = self.encoders[taskname].weight
 
         self.init_weights()
 
@@ -218,16 +226,24 @@ class Multitask_RNNModel(nn.Module):
     def init_weights(self):
         initrange = 0.1
         for task in self.tasks:
-            nn.init.uniform_(self.encoders[task].weight, -initrange, initrange)
-            nn.init.zeros_(self.decoders[task].weight)
-            nn.init.uniform_(self.decoders[task].weight, -initrange, initrange)
+            taskname = task
+            if '.' in task:
+                # replace '.' with '-' for contrib tasks to avoid error 'module name can\'t contain "."
+                taskname = re.sub(r'\.', '-', task)
+            nn.init.uniform_(self.encoders[taskname].weight, -initrange, initrange)
+            nn.init.zeros_(self.decoders[taskname].weight)
+            nn.init.uniform_(self.decoders[taskname].weight, -initrange, initrange)
 
     def forward(self, input, hidden, task):
-        emb = self.encoders[task](input) #input is (100, 20, 53) for cog (35, 20) for wikitext
+        taskname = task
+        if '.' in task:
+            # replace '.' with '-' for contrib tasks to avoid error 'module name can\'t contain "."
+            taskname = re.sub(r'\.', '-', task)
+        emb = self.encoders[taskname](input) #input is (100, 20, 53) for cog (35, 20) for wikitext
         emb = self.drop(emb)
         rnn_activity, hidden = self.rnn(emb, hidden)
         output = self.drop(rnn_activity)
-        decoded = self.decoders[task](output)
+        decoded = self.decoders[taskname](output)
         decoded = decoded.view(-1, self.TRAINING_TASK_SPECS[task]["output_size"])
         return decoded, hidden, rnn_activity
         #return F.log_softmax(decoded, dim=1), hidden, rnn_activity #for NLLLoss
