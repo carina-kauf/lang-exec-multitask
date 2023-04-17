@@ -17,7 +17,7 @@ from task_builder import build_training_tasks
 from models import Multitask_RNNModel, Yang19_CTRNNModel
 from dataloader_lang_tasks import get_batch
 
-from variance_analyis import main as variance_analyis
+from variance_analysis import main as variance_analysis
 from performance_analysis import get_performance
 
 # loss visualization via TensorBoard https://pytorch.org/tutorials/recipes/recipes/tensorboard_with_pytorch.html
@@ -243,7 +243,7 @@ def main(args, model_save_dir):
     silhouette_scores_per_epoch = list()
     if args.TODO == "train+analyze":
         _logger.info(f"Running analysis before training! Saving under epoch 0!")
-        silhouette_scores_per_epoch = variance_analyis(args=args, TRAINING_TASK_SPECS=TRAINING_TASK_SPECS,
+        silhouette_scores_per_epoch = variance_analysis(args=args, TRAINING_TASK_SPECS=TRAINING_TASK_SPECS,
                                                        model=model, device=device, silhouette_scores_per_epoch=silhouette_scores_per_epoch,
                                                        epoch=0, save_dir=model_save_dir)
 
@@ -382,7 +382,7 @@ def main(args, model_save_dir):
         # epoch training has finished here
         if args.TODO == "train+analyze":
             _logger.info(f"Running analysis for epoch {epoch}")
-            silhouette_scores_per_epoch = variance_analyis(args=args, TRAINING_TASK_SPECS=TRAINING_TASK_SPECS, model=model,
+            silhouette_scores_per_epoch = variance_analysis(args=args, TRAINING_TASK_SPECS=TRAINING_TASK_SPECS, model=model,
                                                   device=device, silhouette_scores_per_epoch=silhouette_scores_per_epoch,
                                                   epoch=epoch, save_dir=model_save_dir)
 
