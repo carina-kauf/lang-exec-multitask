@@ -14,7 +14,7 @@ def get_performance(args, task_name, net, device='cpu', num_trial=1000):
     Returns:
         avg_general_perf: average performance on all tasks from the current task set if collection, else perf. on current task
     """
-
+    net.eval()
     if not args.CTRNN:
         hidden = net.init_hidden(1)
 

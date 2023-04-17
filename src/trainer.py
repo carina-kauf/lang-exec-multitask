@@ -101,63 +101,7 @@ def get_weighted_loss(losses):
     return weighted_loss
 
 
-def main(args, model_save_dir):
-    """ Main function
-    args: Arguments
-    model_save_dir: Directory where the model is saved
-    """
-
-    ##################
-    #     SET UP     #
-    ##################
-    train_writer, test_writer, performance_writer = get_writers(model_save_dir)
-    set_seed(args.seed, args.cuda)
-    device = torch.device("cuda" if args.cuda else "cpu")
-    _logger.info(f"Running on this device: {device}")
-
-    #########################
-    #  INIT MODEL & TASKS   #
-    #########################
-    # build training tasks & get specifications
-    TRAINING_TASK_SPECS = build_training_tasks(args)
-    # define full list of task names (yields list of subtasks for collections)
-    individual_tasks = list()
-    for task in TRAINING_TASK_SPECS:
-        if "full_task_list" in TRAINING_TASK_SPECS[task]:
-            individual_tasks.extend(TRAINING_TASK_SPECS[task]["full_task_list"])
-        else:
-            individual_tasks.extend([task])
-    # define language tasks
-    language_tasks = [task for task in TRAINING_TASK_SPECS if TRAINING_TASK_SPECS[task]["dataset"] == "lang"]
-    cognitive_tasks = [task for task in TRAINING_TASK_SPECS if TRAINING_TASK_SPECS[task]["dataset"] == "cog"]
-
-    # determine masking of h2h weights
-    h2h_mask2d = None
-    if args.sparse_model:
-        assert args.CTRNN, "Only implemented for CTRNN right now!"
-        print("Initializing model with anatomical mask on h2h weights!")
-        h2h_mask2d = mask2d(hidden_dim=args.hidden_size, cutoff=3, periodic=False)
-        plt.figure()
-        plt.imshow(h2h_mask2d, cmap="jet")
-        plt.colorbar()
-        plt.title("2d Mask")
-        plt.show()
-        # convert to pytorch tensor from numpy
-        # FIXME turn into parameters
-        h2h_mask2d = torch.from_numpy(h2h_mask2d, dtype=torch.float).to(device)
-
-    # initialize model
-    if args.CTRNN:
-        model = Yang19_CTRNNModel(args=args, TRAINING_TASK_SPECS=TRAINING_TASK_SPECS, mask=h2h_mask2d).to(device)
-    else:
-        model = Multitask_RNNModel(args=args, TRAINING_TASK_SPECS=TRAINING_TASK_SPECS).to(device)
-
-    # print model architecture & parameter groups that are being updated
-    print_model_metainfo(model)
-
-    ###############################
-    #  Determine training config  #
-    ###############################
+def get_epoch_length(args, TRAINING_TASK_SPECS, language_tasks):
     # determine epoch length (number of steps)
     if len(language_tasks) > 0:
         # epoch length is defined by the smallest language training dataset to prevent out-of-bounds errors
@@ -170,23 +114,15 @@ def main(args, model_save_dir):
     if args.dry_run:
         epoch_length = 100
 
-    #######################################
-    #  Evaluate model prior to training   #
-    #######################################
-    # # run analysis on untrained model
-    silhouette_scores_per_epoch = list()
-    if args.TODO == "train+analyze":
-        _logger.info(f"Running analysis before training! Saving under epoch 0!")
-        silhouette_scores_per_epoch = variance_analyis(args=args, TRAINING_TASK_SPECS=TRAINING_TASK_SPECS,
-                                                       model=model, device=device, silhouette_scores_per_epoch=silhouette_scores_per_epoch,
-                                                       epoch=0, save_dir=model_save_dir)
+    return epoch_length
 
-    #########################
-    #      TRAIN MODEL      #
-    #########################
-    # set criterion & define optimizer
-    criterion = nn.CrossEntropyLoss()
-    #TODO clustering is dependent on optimizer, check!
+
+def get_optimizer_and_scheduler(args, model):
+    """
+    Define optimizer and scheduler
+    Define warmup function
+    """
+    # TODO clustering is dependent on optimizer, check!
     if args.optimizer == "AdamW":
         # the below used to work in reducing lang. val data loss perplexity, but prevents clustering
         optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4, weight_decay=0.1)
@@ -213,15 +149,121 @@ def main(args, model_save_dir):
     from torch.optim.lr_scheduler import LambdaLR
     scheduler = LambdaLR(optimizer, lr_lambda=warmup_lambda)
 
-    print("\n".join(["#" * 24, "##### TRAIN MODEL #####", "#" * 24]), flush=True)
+    return optimizer, scheduler
 
-    global_step = 0
+
+def plot_training_curves(npy_losses, npy_avg_perf, npy_avg_perf_all_tasks, model_save_dir, epoch):
+    for name, x in zip(["train_losses", "cog_avg_perfs", "cog_avg_perfs_all_tasks"],
+                       [npy_losses, npy_avg_perf, npy_avg_perf_all_tasks]):
+        plt.figure()
+        for task, value_steps in x.items():
+            if isinstance(value_steps[0][0], float):
+                values, steps = zip(*value_steps)
+                plt.plot(steps, values, label=task, marker='o')
+            elif isinstance(value_steps[0][0], tuple):
+                fig, ax = plt.subplots()
+                frames = []
+                for k in range(len(value_steps)):
+                    names, values, steps = zip(*value_steps[k])
+                    curr_df = pd.DataFrame({"steps": steps, "values": values, "names": names})
+                    frames.append(curr_df)
+                df = pd.concat(frames)
+                sns.lineplot(x="steps", y="values", hue="names", data=df, ax=ax, marker="o")
+            else:
+                raise NotImplementedError
+        plt.title(name)
+        plt.legend(loc='center left', bbox_to_anchor=(1, 0.5))
+        plt.savefig(f"{model_save_dir}/epoch={epoch}_{name}.png", bbox_inches='tight')
+        plt.show()
+        plt.close()
+
+
+def determine_model_masking(args, device, cutoff=3, periodic=False):
+    """ Determine whether to use anatomical masking for the model """
+    h2h_mask2d = None
+    if args.sparse_model:
+        assert args.CTRNN, "Only implemented for CTRNN right now!"
+        print("Initializing model with anatomical mask on h2h weights!")
+        h2h_mask2d = mask2d(hidden_dim=args.hidden_size, cutoff=cutoff, periodic=periodic)
+        plt.figure()
+        plt.imshow(h2h_mask2d, cmap="jet")
+        plt.colorbar()
+        plt.title("2d Mask")
+        plt.show()
+        # convert to pytorch tensor from numpy
+        # FIXME turn into parameters
+        h2h_mask2d = torch.from_numpy(h2h_mask2d, dtype=torch.float).to(device)
+    return h2h_mask2d
+
+
+def main(args, model_save_dir):
+    """ Main function
+    args: Arguments
+    model_save_dir: Directory where the model is saved
+    """
+
+    # SET UP
+    train_writer, test_writer, performance_writer = get_writers(model_save_dir)
+    set_seed(args.seed, args.cuda)
+    device = torch.device("cuda" if args.cuda else "cpu")
+    _logger.info(f"Running on this device: {device}")
+
+    # INIT MODEL & TASKS
+
+    # build training tasks & get specifications
+    TRAINING_TASK_SPECS = build_training_tasks(args)
+    # define full list of task names (yields list of subtasks for collections)
+    individual_tasks = list()
+    for task in TRAINING_TASK_SPECS:
+        if "full_task_list" in TRAINING_TASK_SPECS[task]:
+            individual_tasks.extend(TRAINING_TASK_SPECS[task]["full_task_list"])
+        else:
+            individual_tasks.extend([task])
+
+    # define task groups
+    language_tasks = [task for task in TRAINING_TASK_SPECS if TRAINING_TASK_SPECS[task]["dataset"] == "lang"]
+    cognitive_tasks = [task for task in TRAINING_TASK_SPECS if TRAINING_TASK_SPECS[task]["dataset"] == "cog"]
+
+    # determine masking of h2h weights
+    h2h_mask2d = determine_model_masking(args=args, device=device)
+
+    # initialize model
+    if args.CTRNN:
+        model = Yang19_CTRNNModel(args=args, TRAINING_TASK_SPECS=TRAINING_TASK_SPECS, mask=h2h_mask2d).to(device)
+    else:
+        model = Multitask_RNNModel(args=args, TRAINING_TASK_SPECS=TRAINING_TASK_SPECS).to(device)
+
+    # print model architecture & parameter groups that are being updated
+    print_model_metainfo(model)
+
+    #######################################
+    #  EVALUATE MODEL BEFORE TRAINING     #
+    #######################################
+    # # run analysis on untrained model
+    silhouette_scores_per_epoch = list()
+    if args.TODO == "train+analyze":
+        _logger.info(f"Running analysis before training! Saving under epoch 0!")
+        silhouette_scores_per_epoch = variance_analyis(args=args, TRAINING_TASK_SPECS=TRAINING_TASK_SPECS,
+                                                       model=model, device=device, silhouette_scores_per_epoch=silhouette_scores_per_epoch,
+                                                       epoch=0, save_dir=model_save_dir)
+
+    #########################
+    #      TRAIN MODEL      #
+    #########################
+    print("\n".join(["#" * 24, "##### TRAIN MODEL #####", "#" * 24]), flush=True)
+    # determine epoch length
+    epoch_length = get_epoch_length(args=args, TRAINING_TASK_SPECS=TRAINING_TASK_SPECS, language_tasks=language_tasks)
+    # set criterion & define optimizer
+    criterion = nn.CrossEntropyLoss()
+    optimizer, scheduler = get_optimizer_and_scheduler(args=args, model=model)
+
     # define variable for early stopping
+    global_step = 0
     best_val_loss = None
     EARLY_STOPPING_PATIENCE = 2  # Number of epochs to wait for improvement before early stopping
     epochs_since_improvement = 0
 
-    # define variables for storing performance #TODO: take out if only using Tensorboard
+    # define variables for storing losses/performance #TODO: take out if only using Tensorboard
     npy_avg_perf = {task: [] for task in cognitive_tasks}
     npy_avg_perf_all_tasks = {task: [] for task in cognitive_tasks}
     npy_losses = {task: [] for task in args.tasks}
@@ -328,6 +370,7 @@ def main(args, model_save_dir):
 
                 # reset loss batch counter
                 total_loss = {task: 0. for task in args.tasks}
+                model.train()  # set model back to training mode (changed to eval mode in get_performance)
 
         # get unweighted loss for each task this epoch
         for task in args.tasks:
@@ -341,39 +384,20 @@ def main(args, model_save_dir):
             _logger.info(f"Running analysis for epoch {epoch}")
             silhouette_scores_per_epoch = variance_analyis(args=args, TRAINING_TASK_SPECS=TRAINING_TASK_SPECS, model=model,
                                                   device=device, silhouette_scores_per_epoch=silhouette_scores_per_epoch,
-                                                    epoch=epoch, save_dir=model_save_dir)
+                                                  epoch=epoch, save_dir=model_save_dir)
 
         # plot loss and performance curves
-        for name, x in zip(["train_losses", "cog_avg_perfs", "cog_avg_perfs_all_tasks"], [npy_losses, npy_avg_perf, npy_avg_perf_all_tasks]):
-            plt.figure()
-            for task, value_steps in x.items():
-                if isinstance(value_steps[0][0], float):
-                    values, steps = zip(*value_steps)
-                    plt.plot(steps, values, label=task, marker='o')
-                elif isinstance(value_steps[0][0], tuple):
-                    fig, ax = plt.subplots()
-                    frames = []
-                    for k in range(len(value_steps)):
-                        names, values, steps = zip(*value_steps[k])
-                        curr_df = pd.DataFrame({"steps": steps, "values": values, "names": names})
-                        frames.append(curr_df)
-                    df = pd.concat(frames)
-                    sns.lineplot(x="steps", y="values", hue="names", data=df, ax=ax, marker="o")
-                else:
-                    raise NotImplementedError
-            plt.title(name)
-            plt.legend(loc='center left', bbox_to_anchor=(1, 0.5))
-            plt.savefig(f"{model_save_dir}/epoch={epoch}_{name}.png", bbox_inches='tight')
-            plt.show()
-            plt.close()
+        plot_training_curves(npy_losses=npy_losses, npy_avg_perf=npy_avg_perf,
+                             npy_avg_perf_all_tasks=npy_avg_perf_all_tasks, model_save_dir=model_save_dir, epoch=epoch)
 
         # save losses and performance
         np.save(os.path.join(model_save_dir, f'modellosscurve_epoch={epoch}.npy'), npy_losses, allow_pickle=True)
         np.save(os.path.join(model_save_dir, f'modelavgperf_epoch={epoch}.npy'), npy_avg_perf, allow_pickle=True)
         np.save(os.path.join(model_save_dir, f'modelavgperf_alltasks_epoch={epoch}.npy'), npy_avg_perf_all_tasks,
                 allow_pickle=True)
+
         #######################
-        # Evaluation loss
+        # Evaluation loss     #
         #######################
         if len(language_tasks) > 0:
             print("\n", flush=True)
@@ -428,7 +452,7 @@ def main(args, model_save_dir):
                 print(f"No improvement in validation loss on language tasks for {EARLY_STOPPING_PATIENCE} epochs. Stopping training.")
                 break
 
-
+    # close tensorboard writers
     train_writer.flush()
     test_writer.flush()
     train_writer.close()
