@@ -55,14 +55,14 @@ def print_model_metainfo(model):
     print("\n")
 
 
-def evaluate(args, model, criterion, data_source, mode): #FIXME add early stopping criterion
+def evaluate(args, model, criterion, data_source, task): #FIXME add early stopping criterion
     """Evaluate model on language modeling performance on held-out test set.
     Args:
         args: command line arguments
         model: model to be evaluated
         criterion: loss function
         data_source: test data
-        mode: mode associated with the current language modeling task
+        task: current language modeling task identifier
     """
     # Turn on evaluation mode which disables dropout.
     model.eval()
@@ -74,9 +74,9 @@ def evaluate(args, model, criterion, data_source, mode): #FIXME add early stoppi
         for j in range(0, data_source.size(0) - 1, args.bptt):
             data, targets = get_batch(data_source, j, args.bptt)
             if args.CTRNN:
-                output, _ = model(data, mode)
+                output, _ = model(data, task)
             else:
-                output, hidden, rnn_activity = model(data, hidden, mode)
+                output, hidden, rnn_activity = model(data, hidden, task)
                 hidden = repackage_hidden(hidden)
             total_loss += len(data) * criterion(output, targets).item()
     return total_loss / (len(data_source) - 1)
@@ -94,7 +94,7 @@ def get_writers(model_save_dir):
 
 
 def get_weighted_loss(losses):
-    """ Calculates weighted loss for backpropagartion """
+    """ Calculates weighted loss for backpropagation """
     loss_weights = [1 / loss for loss in losses] #first, calculate the inverse of each loss (higher loss = lower weight)
     loss_weights = [weight / sum(loss_weights) for weight in loss_weights] #second, normalize the weights so they sum to 1
     weighted_loss = sum(weight * loss for weight, loss in zip(loss_weights, losses)) #third, multiply each loss by its weight
@@ -102,11 +102,18 @@ def get_weighted_loss(losses):
 
 
 def get_epoch_length(args, TRAINING_TASK_SPECS, language_tasks):
-    # determine epoch length (number of steps)
+    """ Determine epoch length (number of steps).
+    Defined as the smallest language training dataset to prevent out-of-bounds errors.
+    # TODO: concatenate language datasets to avoid this?
+    Args:
+        args: command line arguments
+        TRAINING_TASK_SPECS: dictionary containing training task specifications
+        language_tasks: list of language tasks
+    Returns:
+        epoch_length: number of steps per epoch
+        """
     if len(language_tasks) > 0:
-        # epoch length is defined by the smallest language training dataset to prevent out-of-bounds errors
-        # TODO: concatenate language datasets to avoid this?
-        epoch_length = min([TRAINING_TASK_SPECS[task]["train_data"].size(0) - 1 for task in args.tasks \
+        epoch_length = min([TRAINING_TASK_SPECS[task]["train_data"].size(0) - 1 for task in args.tasks
                             if task in language_tasks])
     else:
         epoch_length = args.training_yang
@@ -407,7 +414,8 @@ def main(args, model_save_dir):
             for task in args.tasks:
                 if task in language_tasks:
                     print(f"Evaluating LM performance on validation dataset for task {task}")
-                    val_loss = evaluate(args, model, criterion, TRAINING_TASK_SPECS[task]["val_data"], task)
+                    val_loss = evaluate(args=args, model=model, criterion=criterion,
+                                        data_source=TRAINING_TASK_SPECS[task]["val_data"], task=task)
                     print("-" * 89, flush=True)
                     # print training progress
                     elapsed = time.time() - start_time
