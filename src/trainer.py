@@ -264,7 +264,7 @@ def main(args, model_save_dir):
     criterion = nn.CrossEntropyLoss()
     optimizer, scheduler = get_optimizer_and_scheduler(args=args, model=model)
 
-    # define variable for early stopping
+    # define variables for early stopping
     global_step = 0
     best_val_loss = None
     EARLY_STOPPING_PATIENCE = 2  # Number of epochs to wait for improvement before early stopping
@@ -483,7 +483,8 @@ def main(args, model_save_dir):
     for task in args.tasks:
         if task in language_tasks:
             print(f"Evaluating LM performance on test dataset for task {task}")
-            test_loss = evaluate(args, model, criterion, TRAINING_TASK_SPECS[task]["test_data"], task)
+            test_loss = evaluate(args=args, model=model, criterion=criterion,
+                                 data_source=TRAINING_TASK_SPECS[task]["test_data"], task=task)
             print("=" * 89, flush=True)
             print(f"{task} | End of training | test loss {test_loss:5.2f} | test ppl {math.exp(test_loss):8.2f}")
             print("=" * 89, flush=True)
