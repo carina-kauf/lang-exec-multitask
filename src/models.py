@@ -15,7 +15,20 @@ class CTRNN(nn.Module):
         hidden: (batch, hidden_size), initial hidden activity
     """
 
-    def __init__(self, args, mask=None, **kwargs):
+    def __init__(self, args, TRAINING_TASK_SPECS, mask=None, **kwargs):
+        """
+        Initialize a Continuous-Time RNN.
+        tau (float): A scalar parameter that determines the time constant of the CTRNN.
+        alpha (float): A scalar parameter that determines the rate of change of the hidden state.
+            * alpha = 1 corresponds to a discrete-time RNN.
+            * If α=0, the new hidden state h(t) depends entirely on the previous hidden state h(t-1), and not at all on the current input x(t)
+              (hidden state is evolving purely based on its own internal dynamics.)
+            * If α=1, the new hidden state h(t) depends entirely on the current input x(t), and not at all on the previous hidden state h(t-1)
+             (hidden state is essentially a function of the current input, and the network is not using any information from previous timesteps to update the hidden state)
+             * When α is very small, the Continuous-Time RNN update equation becomes very similar to a difference equation,
+              which is the update equation used in a discrete-time RNN.
+
+        """
         super().__init__()
         self.tau = 100
         if args.dt is None:
@@ -41,6 +54,7 @@ class CTRNN(nn.Module):
             'tanh': torch.nn.Tanh()
         }
         self.activation_fn = ACTIVATION_FN_DICT[args.nonlinearity]
+        self.TRAINING_TASK_SPECS = TRAINING_TASK_SPECS
 
     def reset_parameters(self):
         nn.init.eye_(self.h2h.weight)
@@ -51,14 +65,29 @@ class CTRNN(nn.Module):
         return torch.zeros(batch_size, self.hidden_size).to(input.device)
 
     def recurrence(self, input, hidden, input2hs, task):
-        """Recurrence helper."""
-        taskname = task
-        if '.' in task:
-            # replace '.' with '-' for contrib tasks to avoid error 'module name can\'t contain "."
-            taskname = re.sub(r'\.', '-', task)
+        """
+        Recurrence helper function for a Continuous-Time RNN.
+
+        This function takes an input tensor, a hidden state tensor, an input-to-hidden layer, and a task as input.
+        It computes the next hidden state of the RNN using a Continuous-Time RNN update equation with an additional Gaussian noise term.
+
+        Parameters:
+            input (torch.Tensor): Input tensor of shape (batch_size, input_dim) containing the input sequence at the current timestep.
+            hidden (torch.Tensor): Hidden state tensor of shape (batch_size, hidden_dim) containing the hidden state of the RNN at the previous timestep.
+            input2hs (nn.Module): Input-to-hidden linear layer of the RNN.
+            task (int): Task index specifying which task the RNN is currently being used for.
+
+        Returns:
+            h_new (torch.Tensor): Updated hidden state tensor of shape (batch_size, hidden_dim) containing the hidden state of the RNN at the current timestep.
+
+        """
+        taskname = self.TRAINING_TASK_SPECS[task]["taskname"]
 
         try:
             pre_activation = input2hs[taskname](input) + self.h2h(hidden)
+            # pre_activation is a linear transformation of the input and previous hidden state:
+            # pre_activation = W * x(t) + U * h(t-1) + b
+            # W and U are weight matrices, x(t) is the input at the current time step, h(t-1) is the hidden state at the previous time step, and b is a bias term.
         except:
             print(f"Need torch.float32 tensor for cog. tasks but got tensor of type #{input.dtype}#,"
                   f"converting input format")
@@ -69,6 +98,8 @@ class CTRNN(nn.Module):
         std = self._sigma
         noise_rec = torch.normal(mean=mean, std=std)
         pre_activation += noise_rec
+        # if alpha = 1, then the update equation is equivalent to the discrete-time RNN update equation
+        # if alpha < 1, then the update equation is equivalent to the continuous-time RNN update equation
         h_new = hidden * self.oneminusalpha + self.activation_fn(pre_activation) * self.alpha
         return h_new
 
@@ -111,15 +142,21 @@ class Yang19_CTRNNModel(nn.Module):
         # define task-specific encoders and decoders
         encoders, decoders = nn.ModuleDict(), nn.ModuleDict()
         for task in TRAINING_TASK_SPECS.keys():
-            taskname = task
-            if '.' in task:
-                # replace '.' with '-' for contrib tasks to avoid error 'module name can\'t contain "."
-                taskname = re.sub(r'\.', '-', task)
+            taskname = TRAINING_TASK_SPECS[task]["taskname"]
             if TRAINING_TASK_SPECS[task]["using_pretrained_emb"]:
-                encoders.add_module(taskname, nn.Embedding.from_pretrained(TRAINING_TASK_SPECS[task]["pretrained_emb_weights"], freeze=True))
+                encoders.add_module(taskname,
+                                    nn.Sequential(
+                                        *[nn.Embedding.from_pretrained(TRAINING_TASK_SPECS[task]["pretrained_emb_weights"], freeze=True),
+                                        nn.Linear(args.emsize, args.hidden_size)]
+                                    ))
             else:
                 if TRAINING_TASK_SPECS[task]["dataset"] == "lang":
-                    encoders.add_module(taskname, nn.Embedding(TRAINING_TASK_SPECS[task]["input_size"], args.hidden_size))
+                    encoders.add_module(taskname,
+                                        nn.Sequential(
+                                            *[nn.Embedding.from_pretrained(
+                                                TRAINING_TASK_SPECS[task]["pretrained_emb_weights"], freeze=True),
+                                              nn.Linear(args.emsize, args.hidden_size)]
+                                        ))
                 else:
                     assert TRAINING_TASK_SPECS[task]["dataset"] == "cog"
                     encoders.add_module(taskname, nn.Linear(TRAINING_TASK_SPECS[task]["input_size"], args.hidden_size))
@@ -128,16 +165,12 @@ class Yang19_CTRNNModel(nn.Module):
         # build model
         self.encoders = encoders
         # Continuous time RNN
-        self.rnn = CTRNN(args, mask=mask, **kwargs)
+        self.rnn = CTRNN(args=args, TRAINING_TASK_SPECS=TRAINING_TASK_SPECS, mask=mask, **kwargs)
         self.decoders = decoders
 
     def forward(self, x, task):
-        taskname = task
-        if '.' in task:
-            # replace '.' with '-' for contrib tasks to avoid error 'module name can\'t contain "."
-            taskname = re.sub(r'\.', '-', task)
-
-        rnn_activity, _ = self.rnn(x, self.encoders, task)
+        taskname = self.TRAINING_TASK_SPECS[task]["taskname"]
+        rnn_activity, _ = self.rnn(input=x, input2hs=self.encoders, task=task)
         out = self.decoders[taskname](rnn_activity)
         out = out.view(-1, self.TRAINING_TASK_SPECS[task]["output_size"])
         return out, rnn_activity
@@ -169,15 +202,22 @@ class Multitask_RNNModel(nn.Module):
 
         # define task-specific encoders and decoders
         for task in self.tasks:
-            taskname = task
-            if '.' in task:
-                # replace '.' with '-' for contrib tasks to avoid error 'module name can\'t contain "."
-                taskname = re.sub(r'\.', '-', task)
+            taskname = TRAINING_TASK_SPECS[task]["taskname"]
             if TRAINING_TASK_SPECS[task]["pretrained_emb_weights"] is not None:
-                encoders.add_module(taskname, nn.Embedding.from_pretrained(TRAINING_TASK_SPECS[task]["pretrained_emb_weights"], freeze=True))
+                encoders.add_module(taskname,
+                                    nn.Sequential(
+                                        *[nn.Embedding.from_pretrained(
+                                            TRAINING_TASK_SPECS[task]["pretrained_emb_weights"], freeze=True),
+                                          nn.Linear(args.emsize, args.hidden_size)]
+                                    ))
             else:
                 if TRAINING_TASK_SPECS[task]["dataset"] == "lang":
-                    encoders.add_module(taskname, nn.Embedding(TRAINING_TASK_SPECS[task]["input_size"], args.hidden_size))
+                    encoders.add_module(taskname,
+                                        nn.Sequential(
+                                            *[nn.Embedding.from_pretrained(
+                                                TRAINING_TASK_SPECS[task]["pretrained_emb_weights"], freeze=True),
+                                              nn.Linear(args.emsize, args.hidden_size)]
+                                        ))
                 else:
                     assert TRAINING_TASK_SPECS[task]["dataset"] == "cog"
                     encoders.add_module(taskname, nn.Linear(TRAINING_TASK_SPECS[task]["input_size"], args.hidden_size))
@@ -212,10 +252,7 @@ class Multitask_RNNModel(nn.Module):
         # https://arxiv.org/abs/1611.01462
         if args.tie_weights:
             for task in self.tasks:
-                taskname = task
-                if '.' in task:
-                    # replace '.' with '-' for contrib tasks to avoid error 'module name can\'t contain "."
-                    taskname = re.sub(r'\.', '-', task)
+                taskname = TRAINING_TASK_SPECS[task]["taskname"]
                 self.decoders[taskname].weight = self.encoders[taskname].weight
 
         self.init_weights()
@@ -226,19 +263,13 @@ class Multitask_RNNModel(nn.Module):
     def init_weights(self):
         initrange = 0.1
         for task in self.tasks:
-            taskname = task
-            if '.' in task:
-                # replace '.' with '-' for contrib tasks to avoid error 'module name can\'t contain "."
-                taskname = re.sub(r'\.', '-', task)
+            taskname = self.TRAINING_TASK_SPECS[task]["taskname"]
             nn.init.uniform_(self.encoders[taskname].weight, -initrange, initrange)
             nn.init.zeros_(self.decoders[taskname].weight)
             nn.init.uniform_(self.decoders[taskname].weight, -initrange, initrange)
 
     def forward(self, input, hidden, task):
-        taskname = task
-        if '.' in task:
-            # replace '.' with '-' for contrib tasks to avoid error 'module name can\'t contain "."
-            taskname = re.sub(r'\.', '-', task)
+        taskname = self.TRAINING_TASK_SPECS[task]["taskname"]
         emb = self.encoders[taskname](input) #input is (100, 20, 53) for cog (35, 20) for wikitext
         emb = self.drop(emb)
         rnn_activity, hidden = self.rnn(emb, hidden)

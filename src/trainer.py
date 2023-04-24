@@ -23,7 +23,6 @@ from performance_analysis import get_performance
 # loss visualization via TensorBoard https://pytorch.org/tutorials/recipes/recipes/tensorboard_with_pytorch.html
 # tensorboard --logdir=tensorboard_runs #if run from src directory!
 from torch.utils.tensorboard import SummaryWriter
-import re
 
 #added to solve weird font not found error
 plt.rcParams['font.family'] = 'DeJavu Serif'
@@ -55,7 +54,7 @@ def print_model_metainfo(model):
     print("\n")
 
 
-def evaluate(args, model, criterion, data_source, task): #FIXME add early stopping criterion
+def evaluate(args, model, criterion, data_source, task):
     """Evaluate model on language modeling performance on held-out test set.
     Args:
         args: command line arguments
@@ -132,10 +131,10 @@ def get_optimizer_and_scheduler(args, model):
     # TODO clustering is dependent on optimizer, check!
     if args.optimizer == "AdamW":
         # the below used to work in reducing lang. val data loss perplexity, but prevents clustering
-        optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4, weight_decay=0.1)
+        optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay) #TODO make smaller weight decay? .0001
     elif args.optimizer == "Adam":
         # this results in clustering for Yang19
-        optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
+        optimizer = torch.optim.Adam(model.parameters(), lr=args.lr)
     else:
         raise NotImplementedError("Optimizer not implemented!")
 

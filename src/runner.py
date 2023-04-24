@@ -99,19 +99,22 @@ if __name__ == "__main__":
     parser.add_argument("--nlayers", type=int, default=1)
     parser.add_argument("--dropout", type=float, default=0.2)
     parser.add_argument("--tie_weights", action="store_true")
-    parser.add_argument("--hidden_size", type=int, default=256, help="Hidden size of RNN per layer")
+    # SharedModelArguments
+    parser.add_argument("--hidden_size", type=int, default=600, help="Hidden size of RNN per layer")
+    parser.add_argument("--emsize", type=int, default=300, help="Size of word embeddings")
     # TrainingArguments
-    parser.add_argument("--optimizer", default='AdamW')
-    parser.add_argument("--weighted_loss", action="store_true")
-    parser.add_argument("--dt", type=int, default=100)
-    parser.add_argument("--epochs", type=int, default=5)
-    parser.add_argument("--batch_size", type=int, default=64)
-    parser.add_argument("--eval_batch_size", type=int, default=32)
+    parser.add_argument("--seed", type=int, default=1)
+    parser.add_argument("--optimizer", default='Adam')
+    parser.add_argument("--weight_decay", default=0.01, type=float) #try 0.001, 0.0001
+    parser.add_argument("--lr", type=float, default=1e-3) #try 1e-3, 1e-4
+    parser.add_argument("--weighted_loss", action="store_true", help="Use weighted loss for imbalanced tasks")
+    parser.add_argument("--dt", type=int, default=100, help="Time step for CTRNN")
+    parser.add_argument("--epochs", type=int, default=10)
+    parser.add_argument("--batch_size", type=int, default=128)
+    parser.add_argument("--eval_batch_size", type=int, default=64)
     parser.add_argument("--bptt", type=int, default=35)
     parser.add_argument("--seq_len", type=int, default=100)
-    parser.add_argument("--lr", type=float, default=1e-3)
-    parser.add_argument("--clip", type=float, default=1)
-    parser.add_argument("--seed", type=int, default=1)
+    parser.add_argument("--clip", type=float, default=0.25)
     parser.add_argument("--cuda", action="store_true")
     parser.add_argument("--save", default='model.pt')
     parser.add_argument("--log_level", default='INFO')
@@ -123,10 +126,6 @@ if __name__ == "__main__":
     if args.tasks is None:
         args.tasks = ["yang19"]
         print("No tasks specified, running with Yang et al. 2019 (ngym_usage) tasks!")
-
-    if args.glove_emb and args.hidden_size != 300:
-        print(f"Using GloVe embeddings, changing hidden size from {args.hidden_size} to 300!")
-        args.hidden_size = 300
 
     if args.dry_run:
         print("Running in dry run mode! (fewer epochs/training steps, etc.)")
