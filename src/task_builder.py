@@ -3,6 +3,7 @@ from dataloader_cog_tasks import build_cognitive_dataset
 from utils_general import find_matches
 from transformers import HfArgumentParser
 from args import TaskArguments, CTRNNModelArguments, RNNModelArguments, SharedModelArguments, TrainingArguments
+import re
 
 
 def build_training_tasks(args):
@@ -20,6 +21,10 @@ def build_training_tasks(args):
     for i, task in enumerate(args.tasks):
         print(f"*************\nBUILDING DATASET FOR TASK: {task}\n*************\n")
         dataset = find_matches(task2dataset, task)
+        taskname = task
+        if '.' in task:
+            # replace '.' with '-' for contrib tasks to avoid error 'module name can\'t contain "."
+            taskname = re.sub(r'\.', '-', task)
 
         if dataset == "lang":
             vocab, vocab_size, train_data, val_data, test_data, pretrained_emb = build_text_dataset(args, task)
@@ -29,6 +34,7 @@ def build_training_tasks(args):
                 using_pretrained_emb = False
                 
             TRAINING_TASK_SPECS[task] = {
+                "taskname": taskname,
                 "dataset": dataset,
                 "vocab": vocab,
                 "vocab_size": vocab_size,
@@ -50,6 +56,7 @@ def build_training_tasks(args):
             act_size = env.action_space.n
 
             TRAINING_TASK_SPECS[task] = {
+                "taskname": taskname,
                 "full_task_list": tasks,
                 "dataset": dataset,
                 "dataset_cog": dataset_cog,
