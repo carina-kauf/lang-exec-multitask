@@ -126,7 +126,7 @@ def preprocess_dataset(args, dataset_identifier, dataset, vocab_min_frequency=3,
     Args:
         - dataset (list): List of dictionaries, where each dictionary contains a 'text' key with a string.
     Returns:
-        - List of dictionaries, where each dictionary contains a 'is' key with a list of integers.
+        - List of dictionaries, where each dictionary contains a 'ids' key with a list of integers.
         - vocab (torchtext.vocab.Vocab): The vocabulary.
     """
     # tokenize
