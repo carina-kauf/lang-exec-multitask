@@ -6,8 +6,8 @@ Supported environment: `/om2/user/ckauf/anaconda39/envs/multitask_rnn310`
 
 ## Run example
 
-Running the [CTRNN]([class CTRNN(nn.Module):](https://github.com/neurogym/ngym_usage/blob/master/yang19/models.py#L6)) network on
-* the non-verbal executive function task set by [Yang et al., 2020](https://www.nature.com/articles/s41593-018-0310-2)
+Running the [CTRNN](https://github.com/neurogym/ngym_usage/blob/master/yang19/models.py#L6) network on
+* the non-verbal executive function task set by [Yang et al., 2019](https://www.nature.com/articles/s41593-018-0310-2)
 * language modeling for
   * English: [Wikitext corpus](https://huggingface.co/datasets/wikitext)
   * German Wikitext corpus, created via `/nese/mit/group/evlab/u/ckauf/lang-exec-multitask/data/prep_wiki_corpus_pipeline.sh`
