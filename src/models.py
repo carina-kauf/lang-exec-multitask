@@ -98,8 +98,6 @@ class CTRNN(nn.Module):
         std = self._sigma
         noise_rec = torch.normal(mean=mean, std=std)
         pre_activation += noise_rec
-        # if alpha = 1, then the update equation is equivalent to the discrete-time RNN update equation
-        # if alpha < 1, then the update equation is equivalent to the continuous-time RNN update equation
         h_new = hidden * self.oneminusalpha + self.activation_fn(pre_activation) * self.alpha
         return h_new
 
