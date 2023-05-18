@@ -8,26 +8,32 @@ import re
 #####################
 class CTRNN(nn.Module):
     """Continuous-time RNN.
-    Args:
-        hidden_size: Number of hidden neurons
+
     Inputs:
-        input: (seq_len, batch, input_size), network input
-        hidden: (batch, hidden_size), initial hidden activity
+        input: tensor of shape (seq_len, batch, input_size)
+        hidden: tensor of shape (batch, hidden_size), initial hidden activity
+            if None, hidden is initialized through self.init_hidden()
+
+    Outputs:
+        output: tensor of shape (seq_len, batch, hidden_size)
+        hidden: tensor of shape (batch, hidden_size), final hidden activity
     """
 
     def __init__(self, args, TRAINING_TASK_SPECS, mask=None, **kwargs):
         """
         Initialize a Continuous-Time RNN.
-        tau (float): A scalar parameter that determines the time constant of the CTRNN.
-        alpha (float): A scalar parameter that determines the rate of change of the hidden state.
-            * alpha = 1 corresponds to a discrete-time RNN.
-            * If α=0, the new hidden state h(t) depends entirely on the previous hidden state h(t-1), and not at all on the current input x(t)
-              (hidden state is evolving purely based on its own internal dynamics.)
-            * If α=1, the new hidden state h(t) depends entirely on the current input x(t), and not at all on the previous hidden state h(t-1)
-             (hidden state is essentially a function of the current input, and the network is not using any information from previous timesteps to update the hidden state)
-             * When α is very small, the Continuous-Time RNN update equation becomes very similar to a difference equation,
-              which is the update equation used in a discrete-time RNN.
 
+        Description of relevant parameters:
+        args.dt: Δt = time-discretization step
+            * default is args.dt=20 ms
+            * If None, dt equals time constant tau (turns into discrete-time RNN)
+        tau (float): τ = 100 ms is the neuronal time constant.
+            * Real neurons typically have shorter time constants around 20 ms
+            * here the 100 ms time constant mimics the slower synaptic dynamics on the basis of NMDA receptors (Yang et al., 2019).
+        alpha (float): A scalar parameter that determines the rate of change of the hidden state (Δt/τ).
+            * If alpha=1, corresponds to a discrete-time RNN dynamic (set when args.dt=None), i.e., the hidden state
+            update depends on both the previous hidden state and the current input.
+            * If alpha=0, the new hidden state depends entirely on the previous hidden state
         """
         super().__init__()
         self.tau = 100
@@ -38,10 +44,19 @@ class CTRNN(nn.Module):
         self.alpha = alpha
         self.oneminusalpha = 1 - alpha
 
-        self._sigma = np.sqrt(2 / alpha) * args.sigma_rec  # recurrent unit noise
         self.h2h = nn.Linear(args.hidden_size, args.hidden_size)
         self.reset_parameters()
         self.hidden_size = args.hidden_size
+
+        # TODO: take out notes once this is settled!
+        # recurrent unit noise (Source: https://github.com/gyyang/multitask/blob/master/network.py#L259)
+        # Based on this: https://github.com/gyyang/multitask/blob/master/network.py#L259
+        #self._sigma = np.sqrt(2 / alpha) * args.sigma_rec
+
+        # BUT NOTE according to the Yang paper: self._sigma = np.sqrt(2 * self.tau) * args.sigma_rec
+        # BUT according to the original paper, it should indeed be alpha, but as a factor:
+        # Source: https://journals.plos.org/ploscompbiol/article/file?id=10.1371/journal.pcbi.1004792&type=printable, equation 7
+        self._sigma = np.sqrt(2 * alpha) * args.sigma_rec
 
         # initialize hidden to hidden weight matrix using the mask
         if mask is not None:
@@ -67,8 +82,6 @@ class CTRNN(nn.Module):
     def recurrence(self, input, hidden, input2hs, task):
         """
         Recurrence helper function for a Continuous-Time RNN.
-
-        This function takes an input tensor, a hidden state tensor, an input-to-hidden layer, and a task as input.
         It computes the next hidden state of the RNN using a Continuous-Time RNN update equation with an additional Gaussian noise term.
 
         Parameters:
@@ -85,20 +98,22 @@ class CTRNN(nn.Module):
 
         try:
             pre_activation = input2hs[taskname](input) + self.h2h(hidden)
-            # pre_activation is a linear transformation of the input and previous hidden state:
-            # pre_activation = W * x(t) + U * h(t-1) + b
-            # W and U are weight matrices, x(t) is the input at the current time step, h(t-1) is the hidden state at the previous time step, and b is a bias term.
         except:
             print(f"Need torch.float32 tensor for cog. tasks but got tensor of type #{input.dtype}#,"
                   f"converting input format")
             pre_activation = input2hs[taskname](input.to(torch.float32)) + self.h2h(hidden)
 
-        # add recurrent unit noise
-        mean = torch.zeros_like(pre_activation)
-        std = self._sigma
-        noise_rec = torch.normal(mean=mean, std=std)
+        # TODO take out notes once this is settled!
+        # add recurrent unit noise (Source: https://github.com/gyyang/multitask/blob/master/network.py#L210)
+        # Based on: https://github.com/xjwanglab/pycog/blob/5398bb35ccf2749e1b5dc233f1eda77fb64b6004/pycog/rnn.py#LL347C1-L356C68
+        # noise_rec = torch.normal(mean=torch.zeros_like(pre_activation), std=self._sigma)
+        # BUT according to both papers:
+        noise_rec = self._sigma * torch.randn_like(pre_activation)
         pre_activation += noise_rec
-        h_new = hidden * self.oneminusalpha + self.activation_fn(pre_activation) * self.alpha
+
+        # this implements the discretized version of the CTRNN update equation:
+        # [(1 - (Δt/τ)) * r(t)] + [(Δt/τ) * f(W_x * x(t) + W_r * r(t) + b_r)]
+        h_new = self.oneminusalpha * hidden + self.alpha * self.activation_fn(pre_activation)
         return h_new
 
     def forward(self, input, input2hs, task, hidden=None):
@@ -142,17 +157,28 @@ class Yang19_CTRNNModel(nn.Module):
         for task in TRAINING_TASK_SPECS.keys():
             taskname = TRAINING_TASK_SPECS[task]["taskname"]
             if TRAINING_TASK_SPECS[task]["using_pretrained_emb"]:
-                encoders.add_module(taskname,
-                                    nn.Sequential(
-                                        *[nn.Embedding.from_pretrained(TRAINING_TASK_SPECS[task]["pretrained_emb_weights"], freeze=True),
-                                        nn.Linear(args.emsize, args.hidden_size)]
-                                    ))
-            else:
-                if TRAINING_TASK_SPECS[task]["dataset"] == "lang":
+                #FIXME take out the two options after this is settled
+                if not args.add_emb2hid_layer: # frozen embeddings are directly fed to RNN
+                    encoders.add_module(taskname,
+                                        nn.Embedding.from_pretrained(TRAINING_TASK_SPECS[task]["pretrained_emb_weights"],
+                                                                     freeze=True))
+                else: # frozen embeddings are fed to a linear layer before being fed to RNN
                     encoders.add_module(taskname,
                                         nn.Sequential(
+                                            *[nn.Embedding.from_pretrained(TRAINING_TASK_SPECS[task]["pretrained_emb_weights"], freeze=True),
+                                            nn.Linear(args.emsize, args.hidden_size)]
+                                        ))
+            else:
+                if TRAINING_TASK_SPECS[task]["dataset"] == "lang":
+                    if not args.add_emb2hid_layer:
+                        encoders.add_module(taskname,
+                                            nn.Embedding.from_pretrained(
+                                                TRAINING_TASK_SPECS[task]["pretrained_emb_weights"]))
+                    else:
+                        encoders.add_module(taskname,
+                                        nn.Sequential(
                                             *[nn.Embedding.from_pretrained(
-                                                TRAINING_TASK_SPECS[task]["pretrained_emb_weights"], freeze=True),
+                                                TRAINING_TASK_SPECS[task]["pretrained_emb_weights"]),
                                               nn.Linear(args.emsize, args.hidden_size)]
                                         ))
                 else:
@@ -202,7 +228,13 @@ class Multitask_RNNModel(nn.Module):
         for task in self.tasks:
             taskname = TRAINING_TASK_SPECS[task]["taskname"]
             if TRAINING_TASK_SPECS[task]["pretrained_emb_weights"] is not None:
-                encoders.add_module(taskname,
+                if not args.add_emb2hid_layer: #TODO take out the two options after this is settled
+                    encoders.add_module(taskname,
+                                        nn.Embedding.from_pretrained(
+                                            TRAINING_TASK_SPECS[task]["pretrained_emb_weights"],
+                                            freeze=True))
+                else:
+                    encoders.add_module(taskname,
                                     nn.Sequential(
                                         *[nn.Embedding.from_pretrained(
                                             TRAINING_TASK_SPECS[task]["pretrained_emb_weights"], freeze=True),
@@ -210,7 +242,13 @@ class Multitask_RNNModel(nn.Module):
                                     ))
             else:
                 if TRAINING_TASK_SPECS[task]["dataset"] == "lang":
-                    encoders.add_module(taskname,
+                    if not args.add_emb2hid_layer: #TODO take out the two options after this is settled
+                        encoders.add_module(taskname,
+                                            nn.Embedding.from_pretrained(
+                                                TRAINING_TASK_SPECS[task]["pretrained_emb_weights"],
+                                                freeze=True))
+                    else:
+                        encoders.add_module(taskname,
                                         nn.Sequential(
                                             *[nn.Embedding.from_pretrained(
                                                 TRAINING_TASK_SPECS[task]["pretrained_emb_weights"], freeze=True),
