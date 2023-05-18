@@ -10,7 +10,6 @@ import pickle
 import logging
 from transformers import HfArgumentParser
 from args import TaskArguments, CTRNNModelArguments, RNNModelArguments, SharedModelArguments, TrainingArguments
-import random
 
 _logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -266,8 +265,8 @@ def get_local_data_files(local_datapath, identifier):
 
 def build_text_dataset(args, dataset_identifier, return_only_vocab=False):
     """Build a text dataset.
-    # FIXME implement shuffling for the training dataset
     # TODO note that this loads from cache, so if you change the dataset, you need to delete the cache
+    # TODO make more efficient, shouldn't be run if cache exists, just load from cache
     Args:
         - args (argparse.Namespace): The arguments.
         - dataset_identifier (str): The dataset identifier.
