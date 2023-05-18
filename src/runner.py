@@ -78,21 +78,19 @@ def main(args):
 
 
 if __name__ == "__main__":
-    # args = HfArgumentParser(
-    #     [TaskArguments, CTRNNModelArguments, RNNModelArguments, SharedModelArguments, TrainingArguments]
-    # ).parse_args()
-
     parser = argparse.ArgumentParser()
     # TaskArguments
-    parser.add_argument("--glove_emb", action="store_true", default=False, help="Use GloVe embeddings")
     parser.add_argument("--tasks", nargs="+", default=None)
+    parser.add_argument("--TODO", default="train+analyze", help="train+analyze, train_then_analyze, train, analyze")
+    parser.add_argument("--glove_emb", action="store_true", default=False, help="Use GloVe embeddings")
     parser.add_argument("--max_cluster_nr", type=int, default=20)
-    parser.add_argument("--TODO", default="train+analyze")
     # CTRNNModelArguments
     parser.add_argument("--CTRNN", action="store_true")
     parser.add_argument("--nonlinearity", default='relu')
-    parser.add_argument("--sparse_model", action="store_true")
+    parser.add_argument("--dt", type=int, default=20, # https://github.com/gyyang/multitask/blob/master/train.py#LL53C19-L53C21
+                        help="Time step for CTRNN, when None, network becomes discrete time") # We use a discretization step Δt = 20 ms (Yang et al., 2019)
     parser.add_argument("--sigma_rec", type=float, default=0.05)
+    parser.add_argument("--sparse_model", action="store_true", help="Use sparse model from Khona, Chandra et al. (2022)")
     # RNNModelArguments
     parser.add_argument("--discrete_time_rnn", action="store_true")
     parser.add_argument("--rnn_type", default='RNN_RELU')
@@ -100,15 +98,15 @@ if __name__ == "__main__":
     parser.add_argument("--dropout", type=float, default=0.2)
     parser.add_argument("--tie_weights", action="store_true")
     # SharedModelArguments
-    parser.add_argument("--hidden_size", type=int, default=600, help="Hidden size of RNN per layer")
+    parser.add_argument("--hidden_size", type=int, default=300, help="Hidden size of RNN per layer")
     parser.add_argument("--emsize", type=int, default=300, help="Size of word embeddings")
+    parser.add_argument("--add_emb2hid_layer", action="store_true", help="Add an extra layer between embedding and rnn layer")
     # TrainingArguments
     parser.add_argument("--seed", type=int, default=1)
     parser.add_argument("--optimizer", default='Adam')
     parser.add_argument("--weight_decay", default=0.01, type=float) #try 0.001, 0.0001
     parser.add_argument("--lr", type=float, default=1e-3) #try 1e-3, 1e-4
     parser.add_argument("--weighted_loss", action="store_true", help="Use weighted loss for imbalanced tasks")
-    parser.add_argument("--dt", type=int, default=100, help="Time step for CTRNN")
     parser.add_argument("--epochs", type=int, default=10)
     parser.add_argument("--batch_size", type=int, default=128)
     parser.add_argument("--eval_batch_size", type=int, default=64)
@@ -154,6 +152,16 @@ if __name__ == "__main__":
     if any(x in args.tasks for x in ["wikitext", "pennchar", "penntreebank", "de_wiki"]) and not args.glove_emb:
         print("Running with language tasks, using GloVe embeddings by default!")
         args.glove_emb = True
+
+    if not args.add_emb2hid_layer and args.glove_emb:
+        try:
+            assert args.hidden_size == args.emsize
+        except:
+            print("Warning: hidden_size != emsize, but add_emb2hid_layer is False! This will probably cause an error, setting them equal!")
+            args.hidden_size = args.emsize
+
+    if args.add_emb2hid_layer and args.discrete_time_rnn:
+        raise NotImplementedError("Weight initialization not implemented for nn.Sequential.")
 
     main(args)
     print("Finished.")
