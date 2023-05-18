@@ -368,8 +368,8 @@ def main(args, model_save_dir):
                     elapsed = time.time() - start_time
                     stats = f"{log_task} | epoch {epoch:3d} | {step:5d}/{epoch_length} " \
                             f"batches | ms/batch {elapsed * 1000 / args.log_interval:5.2f} | loss {cur_loss:5.2f}"
-                    if log_task in language_tasks:
-                        stats += f" | ppl {math.exp(cur_loss):8.2f}"
+                    #if log_task in language_tasks:
+                    #    stats += f" | ppl {math.exp(cur_loss):8.2f}"
                     print(stats, flush=True)
 
                 train_writer.add_scalars(f'loss', scalar_dict_loss, global_step)
@@ -418,7 +418,7 @@ def main(args, model_save_dir):
                     print("-" * 89, flush=True)
                     # print training progress
                     elapsed = time.time() - start_time
-                    stats = f"{task} | epoch {epoch:3d} | {elapsed} | valid loss {val_loss:5.2f}  | ppl {math.exp(val_loss):8.2f}"
+                    stats = f"{task} | epoch {epoch:3d} | {elapsed} | valid loss {val_loss:5.2f}" #  | ppl {math.exp(val_loss):8.2f}"
                     print(stats, flush=True)
                     print("-" * 89, flush=True)
                     scalar_dict[task] = val_loss
@@ -485,7 +485,7 @@ def main(args, model_save_dir):
             test_loss = evaluate(args=args, model=model, criterion=criterion,
                                  data_source=TRAINING_TASK_SPECS[task]["test_data"], task=task)
             print("=" * 89, flush=True)
-            print(f"{task} | End of training | test loss {test_loss:5.2f} | test ppl {math.exp(test_loss):8.2f}")
+            print(f"{task} | End of training | test loss {test_loss:5.2f}") # | test ppl {math.exp(test_loss):8.2f}")
             print("=" * 89, flush=True)
 
 
