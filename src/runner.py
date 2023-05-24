@@ -141,7 +141,7 @@ if __name__ == "__main__":
         else:
             args.training_yang = 40000
         args.hidden_size = 256
-        args.dt = 100
+        args.dt = 20
 
     assert not all([args.CTRNN, args.discrete_time_rnn]), "Can't run with both CTRNN and discrete time RNN models!"
 
